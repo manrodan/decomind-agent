@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.local
+*.key
+*.pem
+**/credentials*.json
+**/service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+outputs/
+tmp/
