@@ -31,3 +31,6 @@ Thumbs.db
 # Outputs
 outputs/
 tmp/
+
+# Raw external datasets (re-downloadable from source)
+data/raw/

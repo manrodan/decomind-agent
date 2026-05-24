@@ -97,9 +97,18 @@ def geocode_address(
         "found": True,
         "lat": hit.get("lat"),
         "lon": hit.get("lon"),
-        "neighbourhood": addr.get("neighbourhood") or addr.get("quarter"),
-        "suburb": addr.get("suburb"),
+        # Administrativos (los que importan para lookups MITMA/curado)
+        "municipality": (
+            addr.get("city") or addr.get("town") or addr.get("village")
+            or addr.get("municipality") or addr.get("hamlet")
+        ),
+        "province": addr.get("province") or addr.get("state"),
+        "postcode": addr.get("postcode"),
+        "country": addr.get("country"),
+        # Granularidad fina dentro del municipio
         "city_district": addr.get("city_district") or addr.get("district"),
+        "suburb": addr.get("suburb"),
+        "neighbourhood": addr.get("neighbourhood") or addr.get("quarter"),
         "road": addr.get("road"),
         "display_name": hit.get("display_name"),
     }

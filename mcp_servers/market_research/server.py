@@ -66,11 +66,12 @@ def _generate_synthetic_comparables(
     lon: float,
     province: str | None,
     district: str | None,
+    municipality: str | None,
     property_type: str,
     radius_m: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    base_eur_sqm = base_price_per_sqm(province, district)
+    base_eur_sqm = base_price_per_sqm(province, district, municipality)
     rng = _seeded_rng(lat, lon)
 
     streets = [
@@ -128,20 +129,26 @@ def find_comparables(
     lon: float,
     province: str = "",
     district: str = "",
+    municipality: str = "",
     property_type: str = "piso",
     radius_m: int = 500,
     limit: int = 8,
 ) -> dict[str, Any]:
     """Devuelve inmuebles similares (comparables) en la zona indicada.
 
-    En el MVP del challenge usa un generador sintético basado en datos públicos
-    de €/m² por provincia/distrito (INE/Idealista/Tinsa). Estable por coordenada.
+    Mediana €/m² basada en datos oficiales del MITMA (Valor tasado de la
+    vivienda) por municipio cuando es posible; fallback a estadísticas
+    provinciales agregadas. Los comparables individuales (calle, m², precio)
+    son sintéticos sobre esa base, etiquetados como tales en el campo `source`.
 
     Args:
         lat: Latitud del inmueble objetivo.
         lon: Longitud del inmueble objetivo.
-        province: Provincia (ej. "Madrid"). Usado para precio base.
-        district: Distrito municipal (ej. "Centro"). Refina precio base.
+        province: Provincia (ej. "Madrid").
+        district: Distrito municipal (ej. "Centro"). Refina si existe
+            multiplicador curado para esa (provincia, distrito).
+        municipality: Municipio (ej. "Madrid", "Marbella"). Lookup directo
+            en datos MITMA — es el dato más preciso si está disponible.
         property_type: "piso" | "atico" | "casa" | "local". Default "piso".
         radius_m: Radio de búsqueda en metros. Default 500.
         limit: Número de comparables a devolver. Default 8.
@@ -149,8 +156,9 @@ def find_comparables(
     Returns:
         {
           "count": int,
-          "search": {lat, lon, province, district, radius_m},
+          "search": {lat, lon, province, district, municipality, radius_m},
           "median_price_eur_per_m2": float,
+          "data_source": str,  # "mitma_municipal" | "curated_province" | "mitma_province" | "fallback"
           "comparables": [{address, lat, lon, distance_m, surface_m2, rooms, floor,
                           year_built, condition, price_eur, price_eur_per_m2,
                           source}, ...]
@@ -162,18 +170,42 @@ def find_comparables(
         lon=lon,
         province=province or None,
         district=district or None,
+        municipality=municipality or None,
         property_type=property_type,
         radius_m=radius_m,
         limit=limit,
     )
     med = round(median(c["price_eur_per_m2"] for c in comps))
+
+    # determinar de dónde salió la mediana base (para trazabilidad)
+    from mcp_servers.market_research.data import _norm
+    try:
+        from mcp_servers.market_research.data_mitma import (
+            MUNICIPALITY_PRICE_PER_SQM_MITMA,
+            PROVINCE_PRICE_PER_SQM_MITMA,
+        )
+    except ImportError:
+        MUNICIPALITY_PRICE_PER_SQM_MITMA = {}
+        PROVINCE_PRICE_PER_SQM_MITMA = {}
+
+    if municipality and _norm(municipality) in MUNICIPALITY_PRICE_PER_SQM_MITMA:
+        data_source = "mitma_municipal"
+    elif province and _norm(province) in {"madrid", "barcelona"}:
+        data_source = "curated_province"
+    elif province and _norm(province) in PROVINCE_PRICE_PER_SQM_MITMA:
+        data_source = "mitma_province"
+    else:
+        data_source = "fallback"
+
     return {
         "count": len(comps),
         "search": {
-            "lat": lat, "lon": lon, "province": province, "district": district,
+            "lat": lat, "lon": lon, "province": province,
+            "district": district, "municipality": municipality,
             "radius_m": radius_m,
         },
         "median_price_eur_per_m2": med,
+        "data_source": data_source,
         "comparables": comps,
     }
 

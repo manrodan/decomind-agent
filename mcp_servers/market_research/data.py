@@ -122,14 +122,95 @@ def antiquity_multiplier(year_built: int | None) -> float:
     return 0.85
 
 
-def base_price_per_sqm(province: str | None, district: str | None) -> float:
-    """Devuelve €/m² base para una provincia/distrito. Default fallback España: 1800."""
-    if not province:
-        return 1800.0
-    p = province.strip().lower()
-    base = PROVINCE_PRICE_PER_SQM.get(p, 1800.0)
-    if district:
-        d = district.strip().lower()
-        mult = DISTRICT_MULTIPLIER.get((p, d), 1.0)
-        return base * mult
-    return base
+_PROVINCE_PREFIXES = (
+    "comunidad de ", "comunidad foral de ", "comunitat de ",
+    "principado de ", "region de ", "província de ", "provincia de ",
+    "comunitat valenciana", "comunidad valenciana",
+)
+_PROVINCE_ALIASES: dict[str, str] = {
+    "comunitat valenciana": "valencia",
+    "comunidad valenciana": "valencia",
+    "comunidad foral de navarra": "navarra",
+    "principado de asturias": "asturias",
+    "region de murcia": "murcia",
+    "illes balears": "baleares",
+    "islas baleares": "baleares",
+    "araba/alava": "alava",
+    "araba / alava": "alava",
+    "gipuzkoa": "guipuzcoa",
+    "bizkaia": "vizcaya",
+    "a coruna": "la coruna",
+    "a coruña": "la coruña",
+}
+
+
+def _norm(s: str | None) -> str:
+    """lowercase + sin acentos + colapsar espacios + alias administrativos."""
+    if not s:
+        return ""
+    import re
+    import unicodedata
+    out = s.strip().lower()
+    out = "".join(c for c in unicodedata.normalize("NFD", out) if unicodedata.category(c) != "Mn")
+    out = re.sub(r"\s+", " ", out)
+    if out in _PROVINCE_ALIASES:
+        return _PROVINCE_ALIASES[out]
+    for prefix in _PROVINCE_PREFIXES:
+        if out.startswith(prefix):
+            stripped = out[len(prefix):].strip()
+            if stripped:
+                return stripped
+    return out
+
+
+def base_price_per_sqm(
+    province: str | None,
+    district: str | None,
+    municipality: str | None = None,
+) -> float:
+    """Devuelve €/m² base. Preferencia:
+
+    1. MITMA municipio (dato oficial Ministerio de Transportes)
+    2. Provincia estática × multiplicador distrito (curado a mano)
+    3. MITMA provincia (mediana de sus municipios)
+    4. Fallback España 1800 €/m²
+
+    El distrito solo aplica si tenemos multiplicador específico para esa
+    (provincia, distrito) en la tabla curada (Madrid/Barcelona). En el resto
+    de ciudades, el dato MITMA municipal es más preciso que cualquier
+    multiplicador inventado.
+    """
+    try:
+        from mcp_servers.market_research.data_mitma import (
+            MUNICIPALITY_PRICE_PER_SQM_MITMA,
+            PROVINCE_PRICE_PER_SQM_MITMA,
+        )
+    except ImportError:
+        MUNICIPALITY_PRICE_PER_SQM_MITMA = {}
+        PROVINCE_PRICE_PER_SQM_MITMA = {}
+
+    p_norm = _norm(province)
+    m_norm = _norm(municipality)
+    d_norm = _norm(district)
+
+    # 1) MITMA municipio (más granular y oficial)
+    if m_norm and m_norm in MUNICIPALITY_PRICE_PER_SQM_MITMA:
+        # Si además tenemos multiplicador de distrito curado, aplicarlo
+        mitma = MUNICIPALITY_PRICE_PER_SQM_MITMA[m_norm]
+        if d_norm and (p_norm, d_norm) in DISTRICT_MULTIPLIER:
+            return mitma * DISTRICT_MULTIPLIER[(p_norm, d_norm)]
+        return mitma
+
+    # 2) Provincia estática × multiplicador distrito (Madrid/BCN)
+    if p_norm and p_norm in PROVINCE_PRICE_PER_SQM:
+        base = PROVINCE_PRICE_PER_SQM[p_norm]
+        if d_norm and (p_norm, d_norm) in DISTRICT_MULTIPLIER:
+            return base * DISTRICT_MULTIPLIER[(p_norm, d_norm)]
+        return base
+
+    # 3) MITMA provincia (mediana)
+    if p_norm and p_norm in PROVINCE_PRICE_PER_SQM_MITMA:
+        return PROVINCE_PRICE_PER_SQM_MITMA[p_norm]
+
+    # 4) Fallback España
+    return 1800.0
