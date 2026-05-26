@@ -1,0 +1,10 @@
+# Dependencias para Agent Engine packaging (mirror de pyproject.toml).
+# El runtime de Agent Engine instala esto en el contenedor del agente.
+# NO incluye reportlab/pillow/google-cloud-storage — esas viven en el container
+# del MCP dossier-pdf (Cloud Run), no en el del agente.
+google-adk>=0.5.0
+google-genai>=1.0.0
+google-cloud-aiplatform>=1.70.0
+python-dotenv>=1.0.0
+mcp>=1.0.0
+httpx>=0.27.0

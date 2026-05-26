@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -47,8 +48,69 @@ from reportlab.platypus import (
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = REPO_ROOT / "outputs"
 
+# Si está definido DOSSIER_BUCKET, el PDF se sube a GCS y se devuelve URL pública.
+# Si no, se escribe localmente en OUTPUT_DIR (dev local con stdio).
+GCS_BUCKET = os.environ.get("DOSSIER_BUCKET", "").strip()
+
 logger = logging.getLogger("mcp.dossier_pdf")
 mcp = FastMCP("dossier-pdf")
+
+
+def _persist_pdf(pdf_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Persiste el PDF y devuelve {url, location_kind, size_bytes, filename}.
+
+    En modo cloud: sube a GCS y devuelve **signed URL V4** (24h). Sin claves
+    privadas locales — usa la API IAM signBlob de Google (SA debe tener
+    roles/iam.serviceAccountTokenCreator sobre sí misma).
+
+    En dev local (sin DOSSIER_BUCKET): escribe a outputs/ y devuelve file://.
+    """
+    size = len(pdf_bytes)
+    if GCS_BUCKET:
+        from datetime import timedelta
+        from google.auth import default as auth_default
+        from google.auth.transport.requests import Request
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        blob = bucket.blob(filename)
+        blob.upload_from_string(pdf_bytes, content_type="application/pdf")
+
+        # Signed URL V4. En Cloud Run, default credentials vienen del metadata
+        # server (no hay private key local). Hay que firmar vía IAM signBlob.
+        credentials, _ = auth_default()
+        credentials.refresh(Request())
+        sa_email = getattr(credentials, "service_account_email", None)
+
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(hours=24),
+            method="GET",
+            service_account_email=sa_email,
+            access_token=credentials.token,
+        )
+
+        return {
+            "url": signed_url,
+            "location_kind": "gcs_signed",
+            "bucket": GCS_BUCKET,
+            "filename": filename,
+            "size_bytes": size,
+            "expires_in_hours": 24,
+        }
+
+    # Local dev fallback
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = OUTPUT_DIR / filename
+    out_path.write_bytes(pdf_bytes)
+    return {
+        "url": f"file://{out_path}",
+        "location_kind": "local",
+        "path": str(out_path),
+        "filename": filename,
+        "size_bytes": size,
+    }
 
 
 # ---------- helpers (portados de producción) ----------
@@ -273,10 +335,8 @@ def render_dossier_pdf(
     Returns:
         {path, filename, pages_estimated, size_bytes}
     """
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = int(time.time())
     filename = f"dossier_{ts}.pdf"
-    out_path = OUTPUT_DIR / filename
 
     by_room = by_room or []
 
@@ -289,8 +349,9 @@ def render_dossier_pdf(
     }
     S = _styles(agency_primary_color)
 
+    buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        str(out_path),
+        buf,
         pagesize=A4,
         leftMargin=18 * mm, rightMargin=18 * mm,
         topMargin=22 * mm, bottomMargin=22 * mm,
@@ -658,20 +719,18 @@ def render_dossier_pdf(
     ]))
     story.append(verdict_box)
 
-    # build
+    # build → BytesIO
     doc.build(
         story,
         canvasmaker=lambda *a, **kw: _BrandedCanvas(*a, agency=agency, **kw),
     )
 
-    size = out_path.stat().st_size
-    return {
-        "path": str(out_path),
-        "filename": filename,
-        "size_bytes": size,
-        "pages_estimated": 4,
-    }
+    pdf_bytes = buf.getvalue()
+    result = _persist_pdf(pdf_bytes, filename)
+    result["pages_estimated"] = 4
+    return result
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    from mcp_servers._runtime import run_server
+    run_server(mcp)

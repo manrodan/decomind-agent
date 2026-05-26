@@ -1,0 +1,31 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+build
+dist
+.env
+.env.local
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# datos grandes / outputs
+data/raw
+outputs
+tmp
+docs/screenshots
+
+# scripts y docs no necesarios en el container
+scripts
+docs
+README.md

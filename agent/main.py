@@ -13,8 +13,11 @@ Smoke test: dirección + superficie + estado → resumen para el agente inmobili
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,17 +30,105 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.genai import types
 
-load_dotenv()
+# Logging visible en stdout (Reasoning Engine lo captura como Cloud Logging).
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("decomind.agent")
 
-PROJECT = os.environ["GOOGLE_CLOUD_PROJECT"]
+# Carga el .env. En local dev: .env del repo root o del cwd.
+# En runtime cloud (Agent Engine): el .env empaquetado junto a este fichero.
+# Llamamos a load_dotenv DOS veces con paths explícitos para cubrir ambos casos.
+_MODULE_ENV = Path(__file__).resolve().parent / ".env"
+if _MODULE_ENV.exists():
+    load_dotenv(_MODULE_ENV)
+    logger.info("Loaded env from %s", _MODULE_ENV)
+load_dotenv()  # default search — cwd y parents (dev local)
+
+# Defaults seguros para que el módulo sea importable sin .env (necesario para
+# que `adk deploy` pueda hacer packaging). En runtime real las env vars deben
+# estar definidas (Agent Engine recibe --set-env-vars; Cloud Run idem).
+PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "decomind-agent-challenge")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "europe-west1")
 MODEL = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
+
+# Service account a impersonar para obtener ID tokens hacia Cloud Run (HTTP MCP).
+# Solo se usa en local dev. En GCP runtime (Agent Engine, Cloud Run) se usa la
+# identidad propia del runtime via metadata server, sin impersonación.
+MCP_AUTH_SA = os.environ.get(
+    "MCP_AUTH_SERVICE_ACCOUNT",
+    f"decomind-agent-dev@{PROJECT}.iam.gserviceaccount.com",
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# ── HTTP MCP auth helper ──────────────────────────────────────────────────
+#
+# El agente puede correr en dos contextos:
+#
+#   1) LOCAL DEV — user creds via gcloud ADC, sin permiso de auto-emitir ID
+#      tokens con audience. Necesita impersonar la SA decomind-agent-dev
+#      ejecutando `gcloud auth print-identity-token`.
+#
+#   2) GCP RUNTIME (Cloud Run / Agent Engine / GCE / GKE) — metadata server
+#      disponible. La SA del runtime puede solicitar ID tokens directamente
+#      sin impersonación si tiene `run.invoker` sobre el target.
+#
+# Detectamos contexto al primer intento: probamos metadata server, si falla
+# caemos a gcloud subprocess.
+
+
+def _fetch_via_metadata(audience: str) -> str | None:
+    """Intenta obtener un ID token vía metadata server (GCP runtime)."""
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2 import id_token
+        token = id_token.fetch_id_token(Request(), audience)
+        logger.info("Metadata server returned ID token for %s (len=%d)",
+                    audience, len(token) if token else 0)
+        return token
+    except Exception as exc:
+        logger.warning("Metadata server fetch failed for %s: %s", audience, exc)
+        return None
+
+
+def _fetch_via_gcloud(audience: str) -> str:
+    """Fallback: gcloud impersonation (dev local con user creds)."""
+    logger.info("Trying gcloud impersonation for %s", audience)
+    cmd = [
+        "gcloud", "auth", "print-identity-token",
+        f"--impersonate-service-account={MCP_AUTH_SA}",
+        f"--audiences={audience}",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True,
+            shell=(os.name == "nt"),
+        )
+        return result.stdout.strip()
+    except FileNotFoundError:
+        logger.error("gcloud not available in this environment (expected in cloud runtime)")
+        raise
+    except subprocess.CalledProcessError as exc:
+        logger.error("gcloud failed: %s", exc.stderr)
+        raise
+
+
+@lru_cache(maxsize=8)
+def _get_id_token(audience: str) -> str:
+    """Devuelve OIDC ID token para `audience`. Cacheado por proceso (~1h)."""
+    token = _fetch_via_metadata(audience)
+    if token:
+        return token
+    return _fetch_via_gcloud(audience)
+
+
+# ── Toolsets — selección stdio (local) vs HTTP (Cloud Run) ────────────────
+
 def _stdio_toolset(module: str) -> McpToolset:
-    """Crea un McpToolset que spawnea un MCP server local por stdio."""
+    """Spawnea un MCP server local por stdio. Para dev local."""
     return McpToolset(
         connection_params=StdioConnectionParams(
             server_params=StdioServerParameters(
@@ -49,10 +140,65 @@ def _stdio_toolset(module: str) -> McpToolset:
     )
 
 
-geocoding_tools = _stdio_toolset("mcp_servers.geocoding.server")
-market_research_tools = _stdio_toolset("mcp_servers.market_research.server")
-renovation_tools = _stdio_toolset("mcp_servers.renovation.server")
-dossier_pdf_tools = _stdio_toolset("mcp_servers.dossier_pdf.server")
+def _http_toolset(url: str) -> McpToolset:
+    """Conecta a un MCP server vía HTTP (Cloud Run). Token estático resuelto
+    al cargar el módulo. En Agent Engine el contenedor vive ~1h por sesión,
+    el token (también ~1h) suele cubrir; para sesiones más largas se reinicia.
+    """
+    # Importación tardía — la clase puede llamarse distinta según versión ADK.
+    try:
+        from google.adk.tools.mcp_tool.mcp_session_manager import (
+            StreamableHTTPConnectionParams,
+        )
+    except ImportError:
+        from google.adk.tools.mcp_tool.mcp_session_manager import (  # type: ignore
+            StreamableHttpConnectionParams as StreamableHTTPConnectionParams,
+        )
+
+    full_url = f"{url}/mcp"
+    logger.info("Building HTTP MCP toolset for %s", full_url)
+    try:
+        token = _get_id_token(url)
+        logger.info("HTTP MCP toolset auth resolved for %s (token len=%d)",
+                    full_url, len(token))
+    except Exception as exc:
+        logger.error("HTTP MCP toolset auth FAILED for %s: %s", full_url, exc)
+        raise
+
+    return McpToolset(
+        connection_params=StreamableHTTPConnectionParams(
+            url=full_url,
+            headers={"Authorization": f"Bearer {token}"},
+        ),
+    )
+
+
+def _toolset(env_url_var: str, stdio_module: str) -> McpToolset:
+    """Devuelve toolset HTTP si la env var URL está definida, si no stdio."""
+    url = os.environ.get(env_url_var, "").strip().rstrip("/")
+    if url:
+        logger.info("Toolset %s -> HTTP %s", env_url_var, url)
+        return _http_toolset(url)
+    logger.info("Toolset %s -> stdio (%s)", env_url_var, stdio_module)
+    return _stdio_toolset(stdio_module)
+
+
+logger.info(
+    "Initializing Decomind Agent — project=%s location=%s model=%s",
+    PROJECT, LOCATION, MODEL,
+)
+logger.info(
+    "MCP env vars present: geocoding=%s market=%s reno=%s pdf=%s",
+    bool(os.environ.get("MCP_GEOCODING_URL")),
+    bool(os.environ.get("MCP_MARKET_RESEARCH_URL")),
+    bool(os.environ.get("MCP_RENOVATION_URL")),
+    bool(os.environ.get("MCP_DOSSIER_PDF_URL")),
+)
+
+geocoding_tools       = _toolset("MCP_GEOCODING_URL",       "mcp_servers.geocoding.server")
+market_research_tools = _toolset("MCP_MARKET_RESEARCH_URL", "mcp_servers.market_research.server")
+renovation_tools      = _toolset("MCP_RENOVATION_URL",      "mcp_servers.renovation.server")
+dossier_pdf_tools     = _toolset("MCP_DOSSIER_PDF_URL",     "mcp_servers.dossier_pdf.server")
 
 
 root_agent = Agent(
@@ -95,11 +241,26 @@ root_agent = Agent(
         "     paso 5.\n"
         "\n"
         "FASE 3 — Empaquetado en PDF (último paso, solo si el usuario lo pide)\n"
-        "  7) `render_dossier_pdf` — empaqueta TODOS los datos calculados en un\n"
-        "     PDF entregable al propietario. El parámetro `by_room` debe ser\n"
-        "     EXACTAMENTE el array `by_room` que devolvió `estimate_renovation_plan`\n"
-        "     en el paso 4 (cópialo tal cual, no resumas ni inventes).\n"
-        "     agent_verdict: 2-3 frases tuyas con la recomendación final.\n"
+        "  7) DEBES INVOCAR la tool `render_dossier_pdf`. No describas, no muestres\n"
+        "     código Python, no listes parámetros — LLAMA a la tool y espera su\n"
+        "     respuesta. Su respuesta contiene la URL del PDF generado.\n"
+        "     Parámetros obligatorios:\n"
+        "       - property_address, property_municipality, property_district,\n"
+        "         property_surface_m2, property_year_built, property_condition\n"
+        "       - median_price_eur_per_m2 (del paso 2)\n"
+        "       - data_source (del paso 2: 'mitma_municipal' / etc.)\n"
+        "       - current_value_eur (del paso 3)\n"
+        "       - post_reno_value_eur (del paso 5)\n"
+        "       - renovation_total_integral_eur (del paso 4: totals.integral)\n"
+        "       - renovation_tier (del paso 4)\n"
+        "       - by_room (EXACTAMENTE el array by_room del paso 4, sin tocar)\n"
+        "       - roi_net_gain_eur, roi_payback_ratio, roi_recommendation\n"
+        "         (todos del paso 6)\n"
+        "       - agent_verdict (2-3 frases tuyas, EN INGLÉS)\n"
+        "       - property_features (lista de strings cortos en INGLÉS, ej:\n"
+        "         'Built in 1965', 'No elevator', 'Energy rating E')\n"
+        "     Tras la tool, el campo `url` del response es la URL del PDF —\n"
+        "     entrégalo al usuario tal cual.\n"
         "     property_features: lista de strings cortos con características\n"
         "     adicionales que el usuario haya mencionado. **EN INGLÉS** porque\n"
         "     el PDF final está en inglés. Ej: 'No elevator', 'Energy rating E',\n"

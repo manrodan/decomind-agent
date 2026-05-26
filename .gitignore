@@ -34,3 +34,12 @@ tmp/
 
 # Raw external datasets (re-downloadable from source)
 data/raw/
+
+# Cloud env (URLs of deployed services — regenerar con dump_mcp_urls.ps1)
+.env.cloud
+
+# Env file for Agent Engine deployment (generado del .env.cloud)
+.env.agent_engine
+
+# ADK deployment temp folders (timestamped)
+agent_engine_deployment_*

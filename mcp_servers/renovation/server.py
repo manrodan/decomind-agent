@@ -131,4 +131,5 @@ def estimate_renovation_plan(
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    from mcp_servers._runtime import run_server
+    run_server(mcp)

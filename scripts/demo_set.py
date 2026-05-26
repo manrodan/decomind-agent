@@ -165,6 +165,7 @@ async def run_one(case: dict, idx: int, total: int) -> dict:
     t0 = time.time()
     tool_calls: list[str] = []
     final_text_chunks: list[str] = []
+    pdf_url: str | None = None
 
     async for event in runner.run_async(
         user_id=f"demo-{case['label']}",
@@ -176,22 +177,33 @@ async def run_one(case: dict, idx: int, total: int) -> dict:
                 if part.function_call:
                     tool_calls.append(part.function_call.name)
                     print(f"  → {part.function_call.name}")
+                elif part.function_response and part.function_response.name == "render_dossier_pdf":
+                    # Capturamos URL devuelta por el PDF MCP (GCS o local).
+                    try:
+                        resp = part.function_response.response or {}
+                        sc = resp.get("structuredContent") or resp
+                        pdf_url = sc.get("url") or sc.get("path")
+                    except Exception:
+                        pass
                 elif part.text:
                     final_text_chunks.append(part.text)
 
     elapsed = time.time() - t0
-    pdfs_after = {p.name for p in OUTPUT_DIR.glob("dossier_*.pdf")} if OUTPUT_DIR.exists() else set()
-    new_pdfs = sorted(pdfs_after - pdfs_before)
-    new_pdf = new_pdfs[-1] if new_pdfs else None
+    # Fallback: si el PDF se escribió localmente (dev stdio), detectarlo aquí.
+    if not pdf_url:
+        pdfs_after = {p.name for p in OUTPUT_DIR.glob("dossier_*.pdf")} if OUTPUT_DIR.exists() else set()
+        new_pdfs = sorted(pdfs_after - pdfs_before)
+        if new_pdfs:
+            pdf_url = f"local:{new_pdfs[-1]}"
 
-    print(f"\n  ⏱  {elapsed:.1f}s   tools: {len(tool_calls)}   pdf: {new_pdf or '— (no se generó)'}")
+    print(f"\n  ⏱  {elapsed:.1f}s   tools: {len(tool_calls)}   pdf: {pdf_url or '— (no se generó)'}")
 
     return {
         "label": case["label"],
         "comment": case["comment"],
         "elapsed_s": round(elapsed, 1),
         "tool_calls": tool_calls,
-        "pdf": new_pdf,
+        "pdf": pdf_url,
         "text_preview": ("".join(final_text_chunks))[:300],
     }
 
