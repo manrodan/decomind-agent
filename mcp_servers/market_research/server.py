@@ -35,7 +35,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp_servers.market_research.data import (
     CONDITION_MULTIPLIER,
     antiquity_multiplier,
-    base_price_per_sqm,
+    resolve_base_price,
 )
 
 logger = logging.getLogger("mcp.market_research")
@@ -64,14 +64,11 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
 def _generate_synthetic_comparables(
     lat: float,
     lon: float,
-    province: str | None,
-    district: str | None,
-    municipality: str | None,
+    base_eur_sqm: float,
     property_type: str,
     radius_m: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    base_eur_sqm = base_price_per_sqm(province, district, municipality)
     rng = _seeded_rng(lat, lon)
 
     streets = [
@@ -165,37 +162,23 @@ def find_comparables(
         }
     """
     limit = max(1, min(20, limit))
-    comps = _generate_synthetic_comparables(
-        lat=lat,
-        lon=lon,
+
+    # Fuente única de verdad: resolve_base_price devuelve (precio, etiqueta)
+    base_eur_sqm, data_source = resolve_base_price(
         province=province or None,
         district=district or None,
         municipality=municipality or None,
+    )
+
+    comps = _generate_synthetic_comparables(
+        lat=lat,
+        lon=lon,
+        base_eur_sqm=base_eur_sqm,
         property_type=property_type,
         radius_m=radius_m,
         limit=limit,
     )
     med = round(median(c["price_eur_per_m2"] for c in comps))
-
-    # determinar de dónde salió la mediana base (para trazabilidad)
-    from mcp_servers.market_research.data import _norm
-    try:
-        from mcp_servers.market_research.data_mitma import (
-            MUNICIPALITY_PRICE_PER_SQM_MITMA,
-            PROVINCE_PRICE_PER_SQM_MITMA,
-        )
-    except ImportError:
-        MUNICIPALITY_PRICE_PER_SQM_MITMA = {}
-        PROVINCE_PRICE_PER_SQM_MITMA = {}
-
-    if municipality and _norm(municipality) in MUNICIPALITY_PRICE_PER_SQM_MITMA:
-        data_source = "mitma_municipal"
-    elif province and _norm(province) in {"madrid", "barcelona"}:
-        data_source = "curated_province"
-    elif province and _norm(province) in PROVINCE_PRICE_PER_SQM_MITMA:
-        data_source = "mitma_province"
-    else:
-        data_source = "fallback"
 
     return {
         "count": len(comps),

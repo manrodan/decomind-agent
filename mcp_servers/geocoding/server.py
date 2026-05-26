@@ -33,6 +33,48 @@ NOMINATIM_TIMEOUT_SECONDS = float(os.getenv("NOMINATIM_TIMEOUT_SECONDS", "5"))
 
 logger = logging.getLogger("mcp.geocoding")
 
+# Comunidades autónomas — los detectamos para EVITAR confundirlos con provincia.
+# Nominatim en España suele meter la CCAA en `addr.province` o `addr.state`.
+# Si vemos uno de estos nombres en el campo province, buscamos la provincia real
+# en otros campos del response (state_district / county / region).
+_CCAAS_NORM = {
+    "andalucia", "aragon", "asturias", "principado de asturias",
+    "illes balears", "islas baleares", "baleares",
+    "canarias", "cantabria",
+    "castilla y leon", "castilla-la mancha", "castilla la mancha",
+    "cataluna", "catalunya", "cataluña",
+    "comunitat valenciana", "comunidad valenciana",
+    "extremadura", "galicia",
+    "comunidad de madrid", "madrid",
+    "region de murcia", "murcia",
+    "comunidad foral de navarra", "navarra",
+    "pais vasco", "euskadi",
+    "la rioja", "ceuta", "melilla",
+}
+
+
+def _strip_diacritics(s: str) -> str:
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+    ).lower().strip()
+
+
+def _pick_real_province(addr: dict) -> str | None:
+    """De los múltiples campos admin de Nominatim, devuelve la PROVINCIA política
+    (no la CCAA). Estrategia:
+      1. Intenta addr.province. Si no es una CCAA conocida, vale.
+      2. Si addr.province es CCAA o falta, prueba state_district, county, region.
+      3. Si todos fallan, devuelve lo que haya en addr.state (incluso si es CCAA).
+    """
+    candidates_primary = [addr.get("province"), addr.get("state_district"),
+                          addr.get("county"), addr.get("region")]
+    for c in candidates_primary:
+        if c and _strip_diacritics(c) not in _CCAAS_NORM:
+            return c
+    # nada limpio → devolvemos lo más informativo aunque sea CCAA
+    return addr.get("province") or addr.get("state")
+
 mcp = FastMCP("geocoding")
 
 
@@ -102,7 +144,8 @@ def geocode_address(
             addr.get("city") or addr.get("town") or addr.get("village")
             or addr.get("municipality") or addr.get("hamlet")
         ),
-        "province": addr.get("province") or addr.get("state"),
+        "province": _pick_real_province(addr),
+        "autonomous_community": addr.get("state"),  # CCAA (informativo)
         "postcode": addr.get("postcode"),
         "country": addr.get("country"),
         # Granularidad fina dentro del municipio

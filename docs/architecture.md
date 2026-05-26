@@ -1,5 +1,7 @@
 # Arquitectura del Agente
 
+> **Posicionamiento:** Este agente es la **V2 del Dossier de venta** que Decomind ya tiene en producción (Azure Functions, async-volcano, 5-10 min, varios € por dossier). V2 refactoriza la misma utilidad funcional a ADK + MCP + Vertex AI + Gemini Enterprise, con latencia de segundos y coste de céntimos. Coexiste con Deep Research (otro producto, otra granularidad).
+
 ## Visión general
 
 ```

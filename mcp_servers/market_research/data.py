@@ -143,6 +143,38 @@ _PROVINCE_ALIASES: dict[str, str] = {
     "a coruña": "la coruña",
 }
 
+# Alias de municipios con doble nomenclatura (valenciano/catalán/euskera/galego).
+# Aplicado en _norm tras quitar acentos — claves SIN acentos.
+# La clave es la forma "secundaria" (la que devuelve Nominatim o el usuario),
+# el valor es la forma canónica que coincide con MITMA.
+_MUNICIPALITY_ALIASES: dict[str, str] = {
+    # Valenciano / castellano
+    "benicasim": "benicassim",
+    "alcoi": "alcoy",
+    "alacant": "alicante",
+    "castello de la plana": "castellon de la plana",
+    "castello": "castellon de la plana",
+    "elx": "elche",
+    "xativa": "jativa",
+    "ondara": "ondara",
+    "gandia": "gandia",
+    "oriola": "orihuela",
+    # Catalán / castellano
+    "lleida": "lerida",
+    "girona": "gerona",
+    "vic": "vich",
+    # Euskera / castellano
+    "donostia": "san sebastian",
+    "donostia / san sebastian": "san sebastian",
+    "donostia/san sebastian": "san sebastian",
+    "vitoria-gasteiz": "vitoria",
+    "iruna": "pamplona",
+    # Galego / castellano
+    "a coruna": "la coruna",
+    "ourense": "orense",
+    "sanxenxo": "sangenjo",
+}
+
 
 def _norm(s: str | None) -> str:
     """lowercase + sin acentos + colapsar espacios + alias administrativos."""
@@ -155,6 +187,8 @@ def _norm(s: str | None) -> str:
     out = re.sub(r"\s+", " ", out)
     if out in _PROVINCE_ALIASES:
         return _PROVINCE_ALIASES[out]
+    if out in _MUNICIPALITY_ALIASES:
+        return _MUNICIPALITY_ALIASES[out]
     for prefix in _PROVINCE_PREFIXES:
         if out.startswith(prefix):
             stripped = out[len(prefix):].strip()
@@ -163,22 +197,19 @@ def _norm(s: str | None) -> str:
     return out
 
 
-def base_price_per_sqm(
+def resolve_base_price(
     province: str | None,
     district: str | None,
     municipality: str | None = None,
-) -> float:
-    """Devuelve €/m² base. Preferencia:
+) -> tuple[float, str]:
+    """Devuelve (€/m² base, source_label). Fuente única de verdad — el call site
+    obtiene precio y etiqueta de procedencia consistentes.
 
-    1. MITMA municipio (dato oficial Ministerio de Transportes)
-    2. Provincia estática × multiplicador distrito (curado a mano)
-    3. MITMA provincia (mediana de sus municipios)
-    4. Fallback España 1800 €/m²
-
-    El distrito solo aplica si tenemos multiplicador específico para esa
-    (provincia, distrito) en la tabla curada (Madrid/Barcelona). En el resto
-    de ciudades, el dato MITMA municipal es más preciso que cualquier
-    multiplicador inventado.
+    Cadena de preferencia:
+      1. MITMA municipio (dato oficial Ministerio de Transportes)
+      2. Provincia estática × multiplicador distrito (curado Madrid/BCN)
+      3. MITMA provincia (mediana de sus municipios)
+      4. Fallback España 1800 €/m²
     """
     try:
         from mcp_servers.market_research.data_mitma import (
@@ -193,24 +224,33 @@ def base_price_per_sqm(
     m_norm = _norm(municipality)
     d_norm = _norm(district)
 
-    # 1) MITMA municipio (más granular y oficial)
+    # 1) MITMA municipio
     if m_norm and m_norm in MUNICIPALITY_PRICE_PER_SQM_MITMA:
-        # Si además tenemos multiplicador de distrito curado, aplicarlo
         mitma = MUNICIPALITY_PRICE_PER_SQM_MITMA[m_norm]
         if d_norm and (p_norm, d_norm) in DISTRICT_MULTIPLIER:
-            return mitma * DISTRICT_MULTIPLIER[(p_norm, d_norm)]
-        return mitma
+            return mitma * DISTRICT_MULTIPLIER[(p_norm, d_norm)], "mitma_municipal"
+        return mitma, "mitma_municipal"
 
-    # 2) Provincia estática × multiplicador distrito (Madrid/BCN)
+    # 2) Provincia curada (Madrid/BCN principalmente) × distrito
     if p_norm and p_norm in PROVINCE_PRICE_PER_SQM:
         base = PROVINCE_PRICE_PER_SQM[p_norm]
         if d_norm and (p_norm, d_norm) in DISTRICT_MULTIPLIER:
-            return base * DISTRICT_MULTIPLIER[(p_norm, d_norm)]
-        return base
+            return base * DISTRICT_MULTIPLIER[(p_norm, d_norm)], "curated_province"
+        return base, "curated_province"
 
-    # 3) MITMA provincia (mediana)
+    # 3) MITMA provincia
     if p_norm and p_norm in PROVINCE_PRICE_PER_SQM_MITMA:
-        return PROVINCE_PRICE_PER_SQM_MITMA[p_norm]
+        return PROVINCE_PRICE_PER_SQM_MITMA[p_norm], "mitma_province"
 
     # 4) Fallback España
-    return 1800.0
+    return 1800.0, "fallback"
+
+
+def base_price_per_sqm(
+    province: str | None,
+    district: str | None,
+    municipality: str | None = None,
+) -> float:
+    """Compatibilidad — solo devuelve el precio (la fuente se consulta con
+    resolve_base_price si se necesita etiqueta)."""
+    return resolve_base_price(province, district, municipality)[0]

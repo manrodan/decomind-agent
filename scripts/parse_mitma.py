@@ -56,7 +56,31 @@ def latest_quarter_sheet(names: list[str]) -> tuple[str, str]:
     return scored[0][1], scored[0][2]
 
 
-def parse(xls_path: Path) -> tuple[str, dict[str, float], dict[str, float]]:
+# CCAA → lista de provincias (clave normalizada). Para fallback intermedio.
+CCAA_PROVINCES: dict[str, list[str]] = {
+    "andalucia": ["almeria", "cadiz", "cordoba", "granada", "huelva", "jaen", "malaga", "sevilla"],
+    "aragon": ["huesca", "teruel", "zaragoza"],
+    "asturias": ["asturias"],
+    "baleares": ["baleares"],
+    "canarias": ["las palmas", "santa cruz de tenerife"],
+    "cantabria": ["cantabria"],
+    "castilla y leon": ["avila", "burgos", "leon", "palencia", "salamanca", "segovia", "soria", "valladolid", "zamora"],
+    "castilla-la mancha": ["albacete", "ciudad real", "cuenca", "guadalajara", "toledo"],
+    "cataluna": ["barcelona", "girona", "lleida", "tarragona"],
+    "comunitat valenciana": ["alicante", "castellon", "valencia"],
+    "extremadura": ["badajoz", "caceres"],
+    "galicia": ["la coruna", "lugo", "ourense", "pontevedra"],
+    "madrid": ["madrid"],
+    "murcia": ["murcia"],
+    "navarra": ["navarra"],
+    "pais vasco": ["alava", "guipuzcoa", "vizcaya"],
+    "la rioja": ["la rioja"],
+    "ceuta": ["ceuta"],
+    "melilla": ["melilla"],
+}
+
+
+def parse(xls_path: Path) -> tuple[str, dict[str, float], dict[str, float], dict[str, float]]:
     xls = pd.ExcelFile(xls_path)
     sheet, label = latest_quarter_sheet(xls.sheet_names)
     print(f"Trimestre: {label}  (hoja: {sheet!r})")
@@ -98,10 +122,24 @@ def parse(xls_path: Path) -> tuple[str, dict[str, float], dict[str, float]]:
 
         muni_key = normalize_key(muni)
         municipalities[muni_key] = round(total, 1)
+        # Claves bilingües (ej. "castellon de la plana/castello de la plana"):
+        # almacenar también cada parte por separado para que el lookup acepte
+        # cualquiera de las dos formas.
+        if "/" in muni_key:
+            for part in muni_key.split("/"):
+                part = part.strip()
+                if part and part not in municipalities:
+                    municipalities[part] = round(total, 1)
+
         if current_province:
-            province_to_prices.setdefault(
-                normalize_key(current_province), []
-            ).append(total)
+            prov_key = normalize_key(current_province)
+            province_to_prices.setdefault(prov_key, []).append(total)
+            # Mismo trato para provincias bilingües (ej. "castellon/castello")
+            if "/" in prov_key:
+                for part in prov_key.split("/"):
+                    part = part.strip()
+                    if part:
+                        province_to_prices.setdefault(part, []).append(total)
 
     provinces: dict[str, float] = {
         prov: round(median(prices), 1) for prov, prices in province_to_prices.items()

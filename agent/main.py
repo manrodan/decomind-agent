@@ -52,6 +52,7 @@ def _stdio_toolset(module: str) -> McpToolset:
 geocoding_tools = _stdio_toolset("mcp_servers.geocoding.server")
 market_research_tools = _stdio_toolset("mcp_servers.market_research.server")
 renovation_tools = _stdio_toolset("mcp_servers.renovation.server")
+dossier_pdf_tools = _stdio_toolset("mcp_servers.dossier_pdf.server")
 
 
 root_agent = Agent(
@@ -93,6 +94,26 @@ root_agent = Agent(
         "     investment_eur, valor actual del paso 3, y valor post-reforma del "
         "     paso 5.\n"
         "\n"
+        "FASE 3 — Empaquetado en PDF (último paso, solo si el usuario lo pide)\n"
+        "  7) `render_dossier_pdf` — empaqueta TODOS los datos calculados en un\n"
+        "     PDF entregable al propietario. El parámetro `by_room` debe ser\n"
+        "     EXACTAMENTE el array `by_room` que devolvió `estimate_renovation_plan`\n"
+        "     en el paso 4 (cópialo tal cual, no resumas ni inventes).\n"
+        "     agent_verdict: 2-3 frases tuyas con la recomendación final.\n"
+        "     property_features: lista de strings cortos con características\n"
+        "     adicionales que el usuario haya mencionado. **EN INGLÉS** porque\n"
+        "     el PDF final está en inglés. Ej: 'No elevator', 'Energy rating E',\n"
+        "     'Sea view', '2 bedrooms', '1 bathroom', 'Balcony', 'Standard build "
+        "     quality'. Traduce lo que el usuario diga. Si no mencionó nada,\n"
+        "     pasa lista vacía [].\n"
+        "\n"
+        "IMPORTANTE — IDIOMA DEL PDF\n"
+        "El PDF entregable está en INGLÉS (jurado internacional). Por tanto:\n"
+        "  - El parámetro `agent_verdict` debe estar en INGLÉS (2-3 frases).\n"
+        "  - Los `property_features` deben estar en INGLÉS.\n"
+        "  - Lo que respondas al usuario en chat puede ser en español (como te\n"
+        "    haya hablado), pero el contenido que va al PDF siempre en inglés.\n"
+        "\n"
         "REGLAS\n"
         "- No inventes presupuesto. Si pidieras inversión, usa SIEMPRE el output "
         "  de `estimate_renovation_plan`, nunca un número del usuario.\n"
@@ -101,9 +122,15 @@ root_agent = Agent(
         "- Resume en español, con tablas markdown para presupuesto y ROI.\n"
         "- Indica el `source: synthetic-mvp` de los comparables y reproduce el "
         "  `disclaimer` del presupuesto al final.\n"
-        "- Veredicto final de 2-3 líneas para el propietario."
+        "- Veredicto final de 2-3 líneas para el propietario.\n"
+        "- Si generas el PDF, devuelve al usuario la ruta local del archivo."
     ),
-    tools=[geocoding_tools, market_research_tools, renovation_tools],
+    tools=[
+        geocoding_tools,
+        market_research_tools,
+        renovation_tools,
+        dossier_pdf_tools,
+    ],
 )
 
 
@@ -114,7 +141,7 @@ async def smoke() -> None:
     )
 
     prompt = (
-        "Prepara un dossier de valoración + propuesta de reforma para este piso:\n"
+        "Prepara un dossier completo para entregar al propietario de este piso:\n"
         "- Dirección: Calle Mayor 5, Madrid, CP 28013\n"
         "- Superficie: 95 m²\n"
         "- Estado actual: a_reformar\n"
@@ -123,8 +150,9 @@ async def smoke() -> None:
         "  16m², dormitorio secundario 12m², pasillo 7m²\n"
         "- Tier de reforma deseado: standard\n"
         "\n"
-        "Calcula valor actual, presupuesto de reforma desglosado, valor post-reforma "
-        "y ROI. Da un veredicto accionable."
+        "Ejecuta el pipeline completo (zona, comparables, valoración, presupuesto, "
+        "ROI) y AL FINAL llama a `render_dossier_pdf` con todos los datos para "
+        "generar el PDF entregable. Dame la ruta del archivo generado."
     )
 
     print(f"\n[user]\n{prompt}\n")

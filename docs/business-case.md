@@ -18,14 +18,33 @@ Un agente inmobiliario en España invierte **~[TBD] horas** preparando el dossie
 
 ## 2. La solución
 
-**Decomind Agent**: agente autónomo que toma una dirección + datos básicos del inmueble y entrega el dossier completo en minutos. Combina:
+**Decomind Agent** es la **V2 del Dossier de venta** que Decomind ya tiene en producción.
 
-- Deep research de mercado local (scraping Idealista/Fotocasa + comparables geolocalizados).
-- Valoración con costes laborales y de obra por provincia.
-- Propuesta de reforma con renders fotorrealistas por estancia.
-- PDF final listo para enviar al propietario.
+**V1 (en producción hoy, Azure Functions):**
+- Flujo "async-volcano": frontend encola job → worker procesa 5-10 min → callback HMAC.
+- Orquestación imperativa hardcoded: 3 llamadas LLM en secuencia (Gemini Pro shopping list + Gemini Flash Image renders + GPT-4o-mini timeline).
+- Valoración: precio €/m² **introducido manualmente** por el agente inmobiliario (`ManualRoiProvider` devuelve `None` automático).
+- Coste por dossier: varios € (modelos pesados + renders).
+- Acoplado a Azure Storage Queues + Flask callback + custom HMAC.
 
-Refactorizado en Track 3 a arquitectura agéntica nativa GCP (**ADK + MCP + Vertex AI + Gemini Enterprise**), reemplazando la orquestación secuencial en Azure Functions del MVP.
+**V2 (este challenge, GCP):**
+- Orquestación declarativa con **Google ADK** + **Gemini 2.5 Flash** como cerebro.
+- Tools desacopladas como **MCP servers** (geocoding · market-research · renovation · pdf-dossier), intercambiables sin tocar el agente.
+- Valoración **automática** con datos oficiales del **MITMA** (Ministerio de Transportes, ~500 municipios).
+- Latencia objetivo: **5-10 segundos** (vs 5-10 min en V1).
+- Coste objetivo: **céntimos** (vs varios € en V1) gracias a Gemini Flash + tools determinísticas.
+- Registrable en **Gemini Enterprise Agent Platform** y empaquetable para **Google Cloud Marketplace**.
+
+> **No es un producto nuevo — es la misma utilidad para el propietario, una arquitectura preparada para escalar y un coste variable que mejora el margen del plan Pro.**
+
+### Coexistencia con Deep Research
+
+Decomind tiene además un **Deep Research** en producción (`deep-research-preview-04-2026`, $3-5/informe) para reportes largos de mercado por zona. **Coexiste** con el Agent V2:
+
+| Producto | Granularidad | Uso |
+|---|---|---|
+| Deep Research | Zona / CP | Estratégico (¿me interesa esta zona?) |
+| Agent V2 (este challenge) | Inmueble concreto | Operativo (¿qué digo del piso?) |
 
 ## 3. Design Partner Validation
 
@@ -89,20 +108,39 @@ Datos reales (no proyecciones):
 - El agente refactorizado se posiciona como **núcleo del plan Agencia**.
 - **Post-challenge:** listing en **Google Cloud Marketplace** para customers enterprise que prefieran billing GCP.
 
-## 6. Unit economics (proyectados — primer mes de uso real)
+## 6. Unit economics — mejora del margen V1 → V2
 
-| Métrica | Valor estimado |
+### V1 (Dossier en producción hoy, Azure)
+
+| Concepto | Coste estimado por dossier |
 |---|---:|
-| Coste Gemini (orquestador + Deep Research) por dossier | [TBD] € |
-| Coste Imagen 3 (renders, ~5/dossier) | [TBD] € |
-| Coste tools externos (geocoding, scraping) | [TBD] € |
-| **Coste total por dossier** | [TBD] € |
-| Precio implícito en plan Pro (89€ / 5 dossiers) | 17,8 € |
-| Precio implícito en plan Agencia (199€ / 15 dossiers) | 13,3 € |
-| **Margen bruto plan Pro** | [TBD] % |
-| **Margen bruto plan Agencia** | [TBD] % |
+| Gemini 2.5 Pro (shopping list por estancia) | ~0,80 € |
+| Gemini 3.1 Flash Image (renders, ~5/dossier) | ~1,20 € |
+| GPT-4o-mini (renovation timeline) | ~0,10 € |
+| Function App Azure (10 min worker) | ~0,05 € |
+| **Coste variable V1** | **~2,15 €** |
 
-> *Honesto: datos preliminares, se afinan con primer mes completo. Sirve para mostrar viabilidad de unit economics al jurado.*
+### V2 (este challenge, GCP)
+
+| Concepto | Coste estimado por dossier |
+|---|---:|
+| Gemini 2.5 Flash (orquestador, ~10K tokens in/out) | ~0,02 € |
+| MCP tools (Nominatim free + cálculos deterministas) | 0 € |
+| Cloud Run (5-10 seg ejecución) | ~0,01 € |
+| **Coste variable V2** | **~0,03 €** |
+
+### Implicación
+
+| Plan | Precio/mes | Dossiers/mes | Coste V1 | Coste V2 | Margen ganado/mes |
+|---|---:|---:|---:|---:|---:|
+| Pro | 89 € | 5 | 10,75 € | 0,15 € | **+10,60 €** |
+| Agencia | 199 € | 15 | 32,25 € | 0,45 € | **+31,80 €** |
+
+> Refactor V1 → V2 mejora el margen bruto del plan Pro en ~12% y del Agencia en ~16% del precio del plan. **Es exactamente el tipo de mejora que un jurado de Track 3 espera ver** ("from MVP to enterprise — better margins, better latency, better architecture").
+
+### Renders y shopping list (decisión consciente)
+
+V2 NO incluye renders fotorrealistas ni shopping list por estancia. Razón: son las funciones más caras de V1 (Flash Image + Gemini Pro) y aportan valor estético pero no decisión. **Roadmap M2:** MCP `decor-renders` + `shopping-list` opcionales para clientes que paguen extra. Las inmobiliarias que prefieren rapidez (la mayoría) usan V2 plano; las que necesitan pitch visual al propietario pagan add-on.
 
 ## 7. Por qué *ahora* (technical inflection)
 
