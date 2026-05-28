@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Decomind Agent — Real Estate Valuation Powered by Google Cloud</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <span class="brand-name">Decomind Agent</span>
+      <span class="brand-sub">Real-estate valuation · powered by Google Cloud</span>
+    </div>
+    <div class="badges">
+      <span class="badge">ADK</span>
+      <span class="badge">Vertex&nbsp;AI</span>
+      <span class="badge">Agent&nbsp;Engine</span>
+      <span class="badge">MCP × 4</span>
+      <span class="badge">Cloud&nbsp;Run</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <h3>Examples</h3>
+      <button class="example" data-prompt="Prepare a valuation dossier for Calle Mayor 5, Madrid, postal code 28013. 95 sqm flat, to_renovate, built in 1965. Rooms: living 24, kitchen 11, bath 5, master bedroom 16, bedroom 12, hallway 7. Standard tier. I need the PDF.">
+        🏠 Madrid Centro · to renovate
+      </button>
+      <button class="example" data-prompt="Prepare a valuation dossier for Avenida Ricardo Soriano 30, Marbella, postal code 29602. 110 sqm, good_condition, built in 2000. Rooms: living 28, kitchen 12, bath 6, bath 5, master bedroom 16, bedroom 13, hallway 7. Standard tier. PDF please.">
+        🌴 Marbella · good condition
+      </button>
+      <button class="example" data-prompt="Prepare a valuation dossier for Calle Bayer 14, Benicàssim, postal code 12560. 84 sqm, to_renovate, built in 1957. Rooms: living 22, kitchen 9, bath 4, master bedroom 15, bedroom 12, hallway 6. Features: no elevator, energy rating E, 2 bedrooms, 1 bathroom, standard build quality. Standard tier. PDF.">
+        🏖️ Benicàssim · partner case
+      </button>
+
+      <h3>Stack</h3>
+      <ul class="stack">
+        <li>Gemini 2.5 Flash</li>
+        <li>ADK 2.1 orchestrator</li>
+        <li>4 MCP tools (Cloud Run)</li>
+        <li>OIDC service-to-service auth</li>
+        <li>GCS + V4 signed URLs</li>
+        <li>Cloud Trace</li>
+      </ul>
+    </aside>
+
+    <section class="chat">
+      <div id="messages" class="messages">
+        <div class="welcome">
+          <h1>Spanish real-estate dossier in 10 minutes, not 4 hours.</h1>
+          <p>
+            Type a property below or pick an example. The agent will geocode the
+            address, fetch the area median price from official Spanish data
+            (MITMA), build a room-by-room renovation budget, estimate the ROI
+            and generate a downloadable PDF — all streaming live.
+          </p>
+        </div>
+      </div>
+
+      <form id="form" class="composer">
+        <textarea
+          id="input"
+          rows="3"
+          placeholder="Describe the property — address, surface, condition, year, rooms, renovation tier..."
+        ></textarea>
+        <button type="submit" id="send">Run agent</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
