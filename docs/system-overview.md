@@ -181,28 +181,46 @@
   - **Tools:** 4 `McpToolset` (uno por MCP server). Cada uno habla MCP
     sobre Streamable HTTP con header `Authorization: Bearer <OIDC token>`.
 
-### 4.2 Tools expuestas a Gemini
+### 4.2 Tools expuestas a Gemini (6 MCP servers)
 | Tool | Servidor MCP | Hace |
 |---|---|---|
-| `geocode_address` | mcp-geocoding | dirección → lat/lon + municipio + provincia + distrito |
-| `find_comparables` | mcp-market-research | 8 comparables sintéticos en 500m + mediana €/m² oficial MITMA |
-| `estimate_market_value` | mcp-market-research | valor inmueble: m² × mediana × ajustes estado y antigüedad |
+| `geocode_address` | mcp-geocoding | dirección → lat/lon + municipio + provincia + distrito + CP (OSM/Nominatim) |
+| `catastro_lookup` | mcp-catastro | coords → datos OFICIALES del Catastro: año construcción, uso, referencia catastral |
+| `notariado_price` | mcp-notariado | **precio REAL de transacción** ante notario por código postal (fallback muni/provincia) |
+| `find_comparables` | mcp-market-research | mediana €/m² MITMA (valor tasado, segunda fuente para contraste) |
+| `estimate_market_value` | mcp-market-research | valor con **modelo hedónico de 6 factores** sobre precio Notariado |
 | `estimate_room_cost` | mcp-renovation | coste de UNA estancia con desglose por oficio |
 | `estimate_renovation_plan` | mcp-renovation | presupuesto completo de la vivienda con totales |
 | `compute_renovation_roi` | mcp-market-research | revalorización + payback + recomendación |
-| `render_dossier_pdf` | mcp-dossier-pdf | PDF 4 páginas + upload a GCS + signed URL |
+| `render_dossier_pdf` | mcp-dossier-pdf | PDF + doble fuente + hedónico + gráficos → GCS signed URL |
 
-### 4.3 Pipeline típico de 7 tool calls (~25-30 s)
+### 4.2bis Arquitectura de valoración en capas (lo que la hace "buena")
+```
+1. Precio base   → NOTARIADO por código postal (precio REAL de compraventa) ← primario
+                   fallback: municipio → provincia
+2. Segunda fuente → MITMA municipal (valor tasado) — contraste + convergencia
+3. Datos físicos → CATASTRO (año, uso, referencia — oficiales, no input manual)
+4. Ajuste fino   → modelo HEDÓNICO 6 factores (superficie no lineal, planta+ascensor,
+                   eficiencia energética, estado, antigüedad, exterior/interior)
+5. Comparables reales (Catastro vecinos) + precios transacción → roadmap M2
+```
+**Fuentes oficiales gratuitas, sin scraping:** Notariado (compraventas reales),
+Catastro (datos físicos), MITMA (valor tasado). Triangulación con indicador de
+convergencia entre transacción real y tasación.
+
+### 4.3 Pipeline típico de 9 tool calls (~30-40 s)
 ```
 1. geocode_address                  ┐
-2. find_comparables                 │  FASE 1 — Zona + valor actual
-3. estimate_market_value (current)  ┘
+2. catastro_lookup (año oficial)    │
+3. notariado_price (precio REAL)    │  FASE 1 — Zona + valor actual
+4. find_comparables (MITMA contraste)│
+5. estimate_market_value (hedónico) ┘
 
-4. estimate_renovation_plan         ┐  FASE 2 — Propuesta de reforma
-5. estimate_market_value (post)     │
-6. compute_renovation_roi           ┘
+6. estimate_renovation_plan         ┐  FASE 2 — Propuesta de reforma
+7. estimate_market_value (post)     │
+8. compute_renovation_roi           ┘
 
-7. render_dossier_pdf               ─  FASE 3 — Entregable
+9. render_dossier_pdf               ─  FASE 3 — Entregable
 ```
 
 ---
