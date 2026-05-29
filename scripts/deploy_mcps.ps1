@@ -22,6 +22,8 @@ $services = @(
     @{ name = "mcp-market-research";  module = "market_research" }
     @{ name = "mcp-renovation";       module = "renovation" }
     @{ name = "mcp-dossier-pdf";      module = "dossier_pdf" }
+    @{ name = "mcp-catastro";         module = "catastro" }
+    @{ name = "mcp-notariado";        module = "notariado" }
 )
 
 foreach ($svc in $services) {

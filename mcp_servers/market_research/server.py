@@ -37,6 +37,7 @@ from mcp_servers.market_research.data import (
     antiquity_multiplier,
     resolve_base_price,
 )
+from mcp_servers.market_research.hedonic import value_breakdown
 
 logger = logging.getLogger("mcp.market_research")
 
@@ -199,40 +200,56 @@ def estimate_market_value(
     median_price_eur_per_m2: float,
     condition: str = "buen_estado",
     year_built: int = 0,
+    floor: int = -999,
+    has_elevator: bool = True,
+    is_attic: bool = False,
+    energy_rating: str = "",
+    exterior: bool = True,
 ) -> dict[str, Any]:
-    """Estima el valor de mercado de un inmueble.
+    """Estima el valor de mercado con un modelo HEDÓNICO profesional.
 
-    Aplica al €/m² mediano de los comparables el ajuste por estado del inmueble
-    (nuevo / buen_estado / a_reformar) y por antigüedad.
+    A diferencia de un multiplicador plano, ajusta el €/m² de la zona por 6
+    factores que un tasador real considera: superficie (no lineal), estado,
+    antigüedad, planta+ascensor, eficiencia energética y exterior/interior.
 
     Args:
         surface_m2: Superficie construida en m².
-        median_price_eur_per_m2: €/m² mediano (típicamente sale de find_comparables).
-        condition: "nuevo" | "buen_estado" | "a_reformar".
-        year_built: Año de construcción. 0 = desconocido (sin ajuste de antigüedad).
+        median_price_eur_per_m2: €/m² mediano de la zona (de find_comparables).
+        condition: "obra_nueva"|"reformado"|"buen_estado"|"a_reformar"|"ruina".
+        year_built: Año de construcción. 0 = desconocido. (Idealmente del Catastro.)
+        floor: Planta. 0 = bajo. -999 = desconocido (no ajusta).
+        has_elevator: ¿Tiene ascensor? Relevante combinado con floor.
+        is_attic: ¿Es ático? (premium).
+        energy_rating: Letra "A".."G". "" = desconocido.
+        exterior: ¿Exterior? False = interior (penaliza).
 
     Returns:
-        {value_eur, value_eur_per_m2, condition_factor, antiquity_factor,
-         method, assumptions}
+        {value_eur, value_eur_per_m2, base_eur_per_m2, combined_factor,
+         factors{...}, model, assumptions}  — desglose 100% auditable.
     """
-    cond_factor = CONDITION_MULTIPLIER.get(condition, 1.0)
-    age_factor = antiquity_multiplier(year_built or None)
-    adjusted_eur_sqm = median_price_eur_per_m2 * cond_factor * age_factor
-    value = round(adjusted_eur_sqm * surface_m2 / 100) * 100
-
-    return {
-        "value_eur": value,
-        "value_eur_per_m2": round(adjusted_eur_sqm),
-        "condition_factor": cond_factor,
-        "antiquity_factor": age_factor,
-        "method": "comparables_median_x_condition_x_antiquity",
-        "assumptions": {
-            "surface_m2": surface_m2,
-            "median_price_eur_per_m2_input": median_price_eur_per_m2,
-            "condition": condition,
-            "year_built": year_built or None,
-        },
+    bd = value_breakdown(
+        surface_m2=surface_m2,
+        base_eur_per_m2=median_price_eur_per_m2,
+        condition=condition,
+        year_built=year_built or None,
+        floor=None if floor == -999 else floor,
+        has_elevator=has_elevator,
+        is_attic=is_attic,
+        energy_rating=energy_rating or None,
+        exterior=exterior,
+    )
+    bd["assumptions"] = {
+        "surface_m2": surface_m2,
+        "median_price_eur_per_m2_input": median_price_eur_per_m2,
+        "condition": condition,
+        "year_built": year_built or None,
+        "floor": None if floor == -999 else floor,
+        "has_elevator": has_elevator,
+        "is_attic": is_attic,
+        "energy_rating": energy_rating or None,
+        "exterior": exterior,
     }
+    return bd
 
 
 @mcp.tool()

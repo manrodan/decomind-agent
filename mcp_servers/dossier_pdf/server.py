@@ -45,6 +45,12 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from mcp_servers.dossier_pdf.charts import (
+    budget_by_room_chart,
+    price_sources_chart,
+    roi_chart,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = REPO_ROOT / "outputs"
 
@@ -299,6 +305,14 @@ def render_dossier_pdf(
     roi_recommendation: str,
     agent_verdict: str,
     property_features: list[str] | None = None,
+    # Doble fuente de precio + trazabilidad oficial (opcionales)
+    notariado_price_m2: float = 0,
+    notariado_transactions: int = 0,
+    notariado_level: str = "",
+    mitma_price_m2: float = 0,
+    hedonic_factors: dict[str, Any] | None = None,
+    cadastral_reference: str = "",
+    cadastral_year: int = 0,
     agency_name: str = "Decomind",
     agency_primary_color: str = "#1F6FEB",
     agency_contact: str = "",
@@ -550,28 +564,117 @@ def render_dossier_pdf(
         story.append(warn)
         story.append(Spacer(1, 6 * mm))
 
-    # Data source and traceability
-    story.append(Paragraph("Data source and traceability", S["h3"]))
-    src_label = {
-        "mitma_municipal": "Spanish Ministry of Transport (MITMA) — Housing "
-                           "Appraisal Value, official municipal figure.",
-        "curated_province": "Curated provincial median (INE / Tinsa / Notaries) "
-                            "with district-level multiplier.",
-        "mitma_province":   "Spanish Ministry of Transport (MITMA) — provincial "
-                            "aggregate (median of municipalities).",
-        "fallback":         "National estimate (this municipality could not be "
-                            "matched to official sources).",
-    }.get(data_source, data_source)
-    story.append(Paragraph(src_label, S["body"]))
-    story.append(Spacer(1, 4 * mm))
-    story.append(Paragraph(
-        "<i>Individual comparables are synthetic samples generated from the "
-        "official median. Known limitation: sub-municipal granularity (district, "
-        "coastal premium, micro-zones) is not captured at this MVP stage. "
-        "Production roadmap (M2) integrates Idealista Data and Tinsa API under "
-        "commercial contract for real listings and finer geographic resolution.</i>",
-        S["small"],
-    ))
+    # ── Dual-source price triangulation (Notariado real vs MITMA appraisal) ──
+    if notariado_price_m2 or mitma_price_m2:
+        story.append(Paragraph("Price sources — triangulation", S["h3"]))
+        level_en = {
+            "codigo_postal": "postal code", "municipio": "municipality",
+            "provincia": "province",
+        }.get(notariado_level, notariado_level or "area")
+        src_rows = [
+            ["Source", "€/m²", "Type", "Basis"],
+            [
+                "Notariado",
+                _eur(notariado_price_m2) if notariado_price_m2 else "—",
+                "Real transaction",
+                f"{notariado_transactions} notarial sales · {level_en}"
+                if notariado_transactions else level_en,
+            ],
+            [
+                "MITMA",
+                _eur(mitma_price_m2) if mitma_price_m2 else "—",
+                "Appraisal value",
+                "Ministry of Transport reference",
+            ],
+        ]
+        st = Table(src_rows, colWidths=[34 * mm, 30 * mm, 40 * mm, 67 * mm])
+        st.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _hex(agency_primary_color)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
+            ("FONT", (0, 1), (-1, -1), "Helvetica", 8),
+            ("FONT", (1, 1), (1, 2), "Helvetica-Bold", 9),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#F4F6FA")]),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#DDDDDD")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(st)
+
+        # Convergencia entre ambas fuentes
+        if notariado_price_m2 and mitma_price_m2:
+            conv = min(notariado_price_m2, mitma_price_m2) / max(notariado_price_m2, mitma_price_m2)
+            conv_pct = round(conv * 100)
+            if conv_pct >= 85:
+                conv_txt = f"Source convergence {conv_pct}% — robust valuation."
+                conv_bg = "#15803D"
+            else:
+                conv_txt = (f"Source convergence {conv_pct}% — real transactions "
+                            f"diverge from appraisal (high-demand or atypical area).")
+                conv_bg = "#F59E0B"
+            conv_band = Table([[conv_txt]], colWidths=[171 * mm], rowHeights=[7 * mm])
+            conv_band.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(conv_bg)),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+                ("FONT", (0, 0), (-1, -1), "Helvetica-Bold", 9),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(Spacer(1, 2 * mm))
+            story.append(conv_band)
+        # gráfico comparativo de fuentes
+        if notariado_price_m2 or mitma_price_m2:
+            story.append(Spacer(1, 3 * mm))
+            try:
+                story.append(price_sources_chart(
+                    notariado_price_m2, mitma_price_m2, agency_primary_color))
+            except Exception as exc:
+                logger.warning("price_sources_chart failed: %s", exc)
+        story.append(Spacer(1, 6 * mm))
+
+    # ── Official cadastral data ──────────────────────────────────────────
+    if cadastral_reference or cadastral_year:
+        cad = (f"Cadastral reference <b>{cadastral_reference}</b>"
+               if cadastral_reference else "")
+        if cadastral_year:
+            cad += f" · official build year <b>{cadastral_year}</b>"
+        cad += " (Spanish Cadastre, official record)."
+        story.append(Paragraph(cad, S["small"]))
+        story.append(Spacer(1, 4 * mm))
+
+    # ── Hedonic adjustment breakdown ─────────────────────────────────────
+    if hedonic_factors:
+        story.append(Paragraph("Hedonic valuation factors", S["h3"]))
+        labels = {
+            "surface": "Surface", "condition": "Condition", "antiquity": "Age",
+            "floor_elevator": "Floor / elevator", "energy": "Energy rating",
+            "orientation": "Exterior/interior",
+        }
+        hrow = [[labels.get(k, k) for k in hedonic_factors.keys()],
+                [f"×{v}" for v in hedonic_factors.values()]]
+        ht = Table(hrow, colWidths=[28.5 * mm] * len(hedonic_factors))
+        ht.setStyle(TableStyle([
+            ("FONT", (0, 0), (-1, 0), "Helvetica", 7),
+            ("FONT", (0, 1), (-1, 1), "Helvetica-Bold", 9),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#6B7280")),
+            ("TEXTCOLOR", (0, 1), (-1, 1), _hex(agency_primary_color)),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#EEEEEE")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(ht)
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(
+            "<i>Base €/m² adjusted by property characteristics (professional "
+            "hedonic model). Comparables roadmap (M2): real notarial micro-data "
+            "and Idealista listings for finer calibration.</i>",
+            S["small"],
+        ))
+
     story.append(PageBreak())
 
     # ── Page 3: renovation budget ────────────────────────────────────────
@@ -618,6 +721,13 @@ def render_dossier_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         story.append(tb)
+        # gráfico de barras por estancia
+        story.append(Spacer(1, 6 * mm))
+        try:
+            story.append(budget_by_room_chart(
+                by_room, agency_primary_color, _KIND_EN))
+        except Exception as exc:
+            logger.warning("budget_by_room_chart failed: %s", exc)
     else:
         story.append(Paragraph(
             "<i>No room-level breakdown provided.</i>", S["small"],
@@ -656,7 +766,16 @@ def render_dossier_pdf(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(roi_kpis)
-    story.append(Spacer(1, 8 * mm))
+    story.append(Spacer(1, 6 * mm))
+
+    # gráfico de barras ROI
+    try:
+        story.append(roi_chart(
+            current_value_eur, renovation_total_integral_eur,
+            post_reno_value_eur, roi_net_gain_eur, agency_primary_color))
+        story.append(Spacer(1, 6 * mm))
+    except Exception as exc:
+        logger.warning("roi_chart failed: %s", exc)
 
     # Badge de recomendación coloreado
     reco_style = _RECO_STYLE.get(

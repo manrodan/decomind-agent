@@ -374,11 +374,21 @@ C:\ProyectosVS\decomind-agent\
 
 ---
 
-## 10. Lo que queda pendiente
+## 10. Estado y pendientes
+
+**Operativo HOY (validado end-to-end):**
+- ✅ Frontend Web UI (FastAPI + ADK directo + 4 MCPs HTTP) — funciona en local
+  con los 7 tool calls + PDF. **Es el camino de producción real del producto.**
+- ✅ Los 4 MCP servers en Cloud Run con auth IAM.
+- ✅ Agent Engine desplegado + playground (con la salvedad del bug de
+  code-interpreter del REST endpoint — el playground UI de Google sí funciona).
+
+**Pendiente:**
 
 | Pieza | Esfuerzo | Cuándo |
 |---|---|---|
-| Deploy del frontend UI a Cloud Run | 15 min | ahora mismo |
+| Deploy del frontend UI a Cloud Run (ya funciona local) | 15 min | ahora mismo |
+| Mejorar valoración: Catastro + modelo hedónico | 5-6 h | siguiente — núcleo de valor |
 | Gráficos en el PDF (líneas/barras) | 3-4 h | opcional, polish |
 | Vídeo demo 3-5 min | 4-6 h | crítico para submission |
 | Landing page minimal | 3-4 h | opcional, refuerza "producto" |

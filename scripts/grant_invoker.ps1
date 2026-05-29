@@ -20,7 +20,9 @@ $services = @(
     "mcp-geocoding",
     "mcp-market-research",
     "mcp-renovation",
-    "mcp-dossier-pdf"
+    "mcp-dossier-pdf",
+    "mcp-catastro",
+    "mcp-notariado"
 )
 
 Write-Host "Granting roles/run.invoker on 4 services to $Member" -ForegroundColor Cyan
