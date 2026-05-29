@@ -165,7 +165,25 @@ def catastro_lookup(lat: float, lon: float) -> dict[str, Any]:
         return {"found": False, "reason": "no_parcel_for_coordinates"}
 
     units = _building_units(parcel["cadastral_ref"])
-    detail = _unit_detail(units[0]) if units else None
+
+    # Itera por los inmuebles del edificio hasta encontrar uno con año (y
+    # preferiblemente residencial). El primer inmueble puede ser un local sin
+    # año; el año es del edificio, así que cualquiera con dato sirve.
+    detail = None
+    first_with_year = None
+    for rc20 in units[:8]:
+        d = _unit_detail(rc20)
+        if not d:
+            continue
+        if d.get("year_built"):
+            if first_with_year is None:
+                first_with_year = d
+            use = (d.get("use") or "").lower()
+            if "residencial" in use or "vivienda" in use:
+                detail = d
+                break
+    if detail is None:
+        detail = first_with_year or (_unit_detail(units[0]) if units else None)
 
     result: dict[str, Any] = {
         "found": True,

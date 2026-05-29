@@ -1,0 +1,390 @@
+{
+  "overall": 100,
+  "results": [
+    {
+      "id": "madrid-centro",
+      "desc": "Madrid Centro — zona prime, edificio antiguo",
+      "checks": [
+        [
+          "geocode_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_level_ok",
+          true,
+          "level=codigo_postal exp=['codigo_postal', 'municipio']"
+        ],
+        [
+          "notariado_price_in_range",
+          true,
+          "price=5919.4 exp=[4500, 8000]"
+        ],
+        [
+          "notariado_min_transactions",
+          true,
+          "tx=286 min=50"
+        ],
+        [
+          "current_value_in_range",
+          true,
+          "value=387300 exp=[250000, 600000]"
+        ],
+        [
+          "catastro_official_or_graceful",
+          true,
+          "year=1914 (official)"
+        ],
+        [
+          "hedonic_factors_present",
+          true,
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+        ],
+        [
+          "triangulation_available",
+          true,
+          "convergence=82%"
+        ],
+        [
+          "roi_recommendation_valid",
+          true,
+          "reco=muy_recomendado"
+        ],
+        [
+          "roi_coherent",
+          true,
+          "payback=5.13"
+        ]
+      ],
+      "passed": 11,
+      "total": 11,
+      "score": 100,
+      "elapsed_s": 5.0,
+      "snapshot": {
+        "year_built": 1914,
+        "notariado_price": 5919.4,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 286,
+        "mitma_price": 7198,
+        "convergence_pct": 82,
+        "current_value": 387300,
+        "reno_total": 16576.25,
+        "post_value": 472400,
+        "roi_recommendation": "muy_recomendado"
+      }
+    },
+    {
+      "id": "marbella-costa",
+      "desc": "Marbella — costa premium, buen estado",
+      "checks": [
+        [
+          "geocode_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_level_ok",
+          true,
+          "level=codigo_postal exp=['codigo_postal', 'municipio']"
+        ],
+        [
+          "notariado_price_in_range",
+          true,
+          "price=5407.2 exp=[2500, 6000]"
+        ],
+        [
+          "notariado_min_transactions",
+          true,
+          "tx=682 min=30"
+        ],
+        [
+          "current_value_in_range",
+          true,
+          "value=594800 exp=[300000, 800000]"
+        ],
+        [
+          "catastro_official_or_graceful",
+          true,
+          "year=None (graceful-degradation)"
+        ],
+        [
+          "hedonic_factors_present",
+          true,
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+        ],
+        [
+          "triangulation_available",
+          true,
+          "convergence=66%"
+        ],
+        [
+          "roi_recommendation_valid",
+          true,
+          "reco=no_recomendado"
+        ],
+        [
+          "roi_coherent",
+          true,
+          "payback=0.0"
+        ]
+      ],
+      "passed": 11,
+      "total": 11,
+      "score": 100,
+      "elapsed_s": 2.3,
+      "snapshot": {
+        "year_built": null,
+        "notariado_price": 5407.2,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 682,
+        "mitma_price": 3571,
+        "convergence_pct": 66,
+        "current_value": 594800,
+        "reno_total": 20741.0,
+        "post_value": 594800,
+        "roi_recommendation": "no_recomendado"
+      }
+    },
+    {
+      "id": "valencia-ruzafa",
+      "desc": "Valencia — capital, mercado activo",
+      "checks": [
+        [
+          "geocode_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_level_ok",
+          true,
+          "level=codigo_postal exp=['codigo_postal', 'municipio']"
+        ],
+        [
+          "notariado_price_in_range",
+          true,
+          "price=2912.5 exp=[1500, 4000]"
+        ],
+        [
+          "notariado_min_transactions",
+          true,
+          "tx=637 min=30"
+        ],
+        [
+          "current_value_in_range",
+          true,
+          "value=161200 exp=[120000, 350000]"
+        ],
+        [
+          "catastro_official_or_graceful",
+          true,
+          "year=1905 (official)"
+        ],
+        [
+          "hedonic_factors_present",
+          true,
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+        ],
+        [
+          "triangulation_available",
+          true,
+          "convergence=92%"
+        ],
+        [
+          "roi_recommendation_valid",
+          true,
+          "reco=muy_recomendado"
+        ],
+        [
+          "roi_coherent",
+          true,
+          "payback=2.35"
+        ]
+      ],
+      "passed": 11,
+      "total": 11,
+      "score": 100,
+      "elapsed_s": 4.1,
+      "snapshot": {
+        "year_built": 1905,
+        "notariado_price": 2912.5,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 637,
+        "mitma_price": 2689,
+        "convergence_pct": 92,
+        "current_value": 161200,
+        "reno_total": 15032.75,
+        "post_value": 196600,
+        "roi_recommendation": "muy_recomendado"
+      }
+    },
+    {
+      "id": "bilbao-centro",
+      "desc": "Bilbao — capital norte, sin multiplicador distrito curado",
+      "checks": [
+        [
+          "geocode_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_level_ok",
+          true,
+          "level=codigo_postal exp=['codigo_postal', 'municipio']"
+        ],
+        [
+          "notariado_price_in_range",
+          true,
+          "price=4644.5 exp=[2000, 5000]"
+        ],
+        [
+          "notariado_min_transactions",
+          true,
+          "tx=127 min=20"
+        ],
+        [
+          "current_value_in_range",
+          true,
+          "value=323700 exp=[150000, 400000]"
+        ],
+        [
+          "catastro_official_or_graceful",
+          true,
+          "year=None (graceful-degradation)"
+        ],
+        [
+          "hedonic_factors_present",
+          true,
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+        ],
+        [
+          "triangulation_available",
+          true,
+          "convergence=73%"
+        ],
+        [
+          "roi_recommendation_valid",
+          true,
+          "reco=muy_recomendado"
+        ],
+        [
+          "roi_coherent",
+          true,
+          "payback=4.53"
+        ]
+      ],
+      "passed": 11,
+      "total": 11,
+      "score": 100,
+      "elapsed_s": 1.9,
+      "snapshot": {
+        "year_built": null,
+        "notariado_price": 4644.5,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 127,
+        "mitma_price": 3374,
+        "convergence_pct": 73,
+        "current_value": 323700,
+        "reno_total": 15682.75,
+        "post_value": 394800,
+        "roi_recommendation": "muy_recomendado"
+      }
+    },
+    {
+      "id": "benicassim-pueblo",
+      "desc": "Benicàssim — pueblo costero pequeño (test fallback de granularidad)",
+      "checks": [
+        [
+          "geocode_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_found",
+          true,
+          "found=True"
+        ],
+        [
+          "notariado_level_ok",
+          true,
+          "level=codigo_postal exp=['codigo_postal', 'municipio', 'provincia']"
+        ],
+        [
+          "notariado_price_in_range",
+          true,
+          "price=2706.4 exp=[1000, 3500]"
+        ],
+        [
+          "notariado_min_transactions",
+          true,
+          "tx=432 min=0"
+        ],
+        [
+          "current_value_in_range",
+          true,
+          "value=156600 exp=[80000, 300000]"
+        ],
+        [
+          "catastro_official_or_graceful",
+          true,
+          "year=1915 (official)"
+        ],
+        [
+          "hedonic_factors_present",
+          true,
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+        ],
+        [
+          "triangulation_available",
+          true,
+          "convergence=54%"
+        ],
+        [
+          "roi_recommendation_valid",
+          true,
+          "reco=muy_recomendado"
+        ],
+        [
+          "roi_coherent",
+          true,
+          "payback=2.21"
+        ]
+      ],
+      "passed": 11,
+      "total": 11,
+      "score": 100,
+      "elapsed_s": 3.4,
+      "snapshot": {
+        "year_built": 1915,
+        "notariado_price": 2706.4,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 432,
+        "mitma_price": 1462,
+        "convergence_pct": 54,
+        "current_value": 156600,
+        "reno_total": 15600.25,
+        "post_value": 191000,
+        "roi_recommendation": "muy_recomendado"
+      }
+    }
+  ]
+}
