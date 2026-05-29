@@ -38,6 +38,11 @@ from mcp_servers.market_research.data import (
     resolve_base_price,
 )
 from mcp_servers.market_research.hedonic import value_breakdown
+from mcp_servers._guardrails import (
+    assess_source_agreement,
+    validate_inputs,
+    validate_valuation,
+)
 
 logger = logging.getLogger("mcp.market_research")
 
@@ -227,6 +232,17 @@ def estimate_market_value(
         {value_eur, value_eur_per_m2, base_eur_per_m2, combined_factor,
          factors{...}, model, assumptions}  — desglose 100% auditable.
     """
+    # Guardrails de entrada: rechaza datos imposibles antes de calcular.
+    input_errors = validate_inputs(
+        surface_m2=surface_m2, year_built=year_built or None, condition=condition,
+    )
+    if input_errors:
+        return {
+            "error": "invalid_input",
+            "validation_errors": input_errors,
+            "value_eur": None,
+        }
+
     bd = value_breakdown(
         surface_m2=surface_m2,
         base_eur_per_m2=median_price_eur_per_m2,
@@ -238,6 +254,10 @@ def estimate_market_value(
         energy_rating=energy_rating or None,
         exterior=exterior,
     )
+
+    # Guardrails de salida: marca si la valoración cae fuera de rangos de mercado.
+    bd["warnings"] = validate_valuation(bd.get("value_eur"), bd.get("value_eur_per_m2"))
+    bd["requires_review"] = bool(bd["warnings"])
     bd["assumptions"] = {
         "surface_m2": surface_m2,
         "median_price_eur_per_m2_input": median_price_eur_per_m2,
@@ -293,6 +313,31 @@ def compute_renovation_roi(
         "payback_ratio": payback,
         "recommendation": rec,
     }
+
+
+@mcp.tool()
+def check_source_agreement(
+    notariado_price_eur_per_m2: float = 0,
+    mitma_price_eur_per_m2: float = 0,
+) -> dict[str, Any]:
+    """Compara las dos fuentes oficiales de precio (Notariado real vs MITMA
+    tasación) y evalúa su concordancia.
+
+    Guardrail de calidad: si las fuentes divergen demasiado (transacción real
+    muy lejos de la tasación), marca requires_review=True para que el agente
+    inmobiliario lo valide antes de fijar precio, en vez de dar un número a ciegas.
+
+    Args:
+        notariado_price_eur_per_m2: €/m² real de transacción (del Notariado).
+        mitma_price_eur_per_m2: €/m² tasado (de MITMA).
+
+    Returns:
+        {convergence_pct, agreement (high/moderate/low/single_source),
+         requires_review, note}
+    """
+    return assess_source_agreement(
+        notariado_price_eur_per_m2 or None, mitma_price_eur_per_m2 or None,
+    )
 
 
 if __name__ == "__main__":

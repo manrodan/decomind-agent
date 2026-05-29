@@ -114,6 +114,12 @@ def notariado_price(
         }
         Si no hay dato en ningún nivel: {"found": False}.
     """
+    # Guardrail: valida formato del CP (no bloquea el fallback a municipio).
+    from mcp_servers._guardrails import validate_postal_code
+    cp_error = validate_postal_code(postal_code)
+    if cp_error and postal_code:
+        postal_code = ""  # CP malformado → ignora, usa municipio/provincia
+
     out = ("precio_m2,precio_medio,superficie_media,total,total_informados,"
            "es_estimado")
 
