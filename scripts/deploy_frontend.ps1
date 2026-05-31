@@ -54,7 +54,10 @@ if ($mcpVars.Count -lt 6) {
     }
 }
 
-$envVars = "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=$REGION,AGENT_MODEL=gemini-2.5-flash"
+# Nota: el modelo Gemini 3.5 Flash vive en el endpoint 'global' (no en
+# europe-west1). Los MCPs siguen en europe-west1 (URLs absolutas), solo el LLM
+# corre en global.
+$envVars = "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,AGENT_MODEL=gemini-3.5-flash"
 foreach ($k in $mcpVars.Keys) {
     $envVars += ",$k=$($mcpVars[$k])"
 }

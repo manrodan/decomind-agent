@@ -261,7 +261,10 @@ function renderMarkdown(md) {
   html = html.replace(/__(.+?)__/g, "<b>$1</b>");
   html = html.replace(/\*(.+?)\*/g, "<i>$1</i>");
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // Solo renderiza como enlace si el href es una URL http real (evita
+  // placeholders rotos tipo {url} que el modelo pueda escribir).
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, href) =>
+    /^https?:\/\//.test(href) ? `<a href="${href}" target="_blank">${text}</a>` : text);
   // tablas markdown (simple)
   html = html.replace(/^(\|.+\|)\n\|[-:| ]+\|\n((?:\|.+\|\n?)+)/gm, (m, header, body) => {
     const ths = header.split("|").filter(Boolean).map((c) => `<th>${c.trim()}</th>`).join("");

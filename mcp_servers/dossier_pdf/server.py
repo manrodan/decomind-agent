@@ -65,17 +65,18 @@ mcp = FastMCP("dossier-pdf")
 def _persist_pdf(pdf_bytes: bytes, filename: str) -> dict[str, Any]:
     """Persiste el PDF y devuelve {url, location_kind, size_bytes, filename}.
 
-    En modo cloud: sube a GCS y devuelve **signed URL V4** (24h). Sin claves
-    privadas locales — usa la API IAM signBlob de Google (SA debe tener
-    roles/iam.serviceAccountTokenCreator sobre sí misma).
+    En modo cloud: sube a GCS y devuelve una **URL pública corta y limpia**
+    (https://storage.googleapis.com/<bucket>/<file>.pdf). Corta = el LLM la
+    reproduce fiablemente (las signed URLs de 300+ chars hacían que el modelo
+    pusiera placeholders rotos). El bucket tiene allUsers:objectViewer.
+
+    El nombre lleva timestamp (no adivinable). Para producción con datos
+    sensibles, volver a signed URLs o tokens.
 
     En dev local (sin DOSSIER_BUCKET): escribe a outputs/ y devuelve file://.
     """
     size = len(pdf_bytes)
     if GCS_BUCKET:
-        from datetime import timedelta
-        from google.auth import default as auth_default
-        from google.auth.transport.requests import Request
         from google.cloud import storage
 
         client = storage.Client()
@@ -83,27 +84,13 @@ def _persist_pdf(pdf_bytes: bytes, filename: str) -> dict[str, Any]:
         blob = bucket.blob(filename)
         blob.upload_from_string(pdf_bytes, content_type="application/pdf")
 
-        # Signed URL V4. En Cloud Run, default credentials vienen del metadata
-        # server (no hay private key local). Hay que firmar vía IAM signBlob.
-        credentials, _ = auth_default()
-        credentials.refresh(Request())
-        sa_email = getattr(credentials, "service_account_email", None)
-
-        signed_url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(hours=24),
-            method="GET",
-            service_account_email=sa_email,
-            access_token=credentials.token,
-        )
-
+        public_url = f"https://storage.googleapis.com/{GCS_BUCKET}/{filename}"
         return {
-            "url": signed_url,
-            "location_kind": "gcs_signed",
+            "url": public_url,
+            "location_kind": "gcs_public",
             "bucket": GCS_BUCKET,
             "filename": filename,
             "size_bytes": size,
-            "expires_in_hours": 24,
         }
 
     # Local dev fallback

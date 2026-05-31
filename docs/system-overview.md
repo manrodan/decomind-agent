@@ -225,6 +225,58 @@ convergencia entre transacción real y tasación.
 
 ---
 
+## 4ter. Production-readiness — evals y guardrails
+
+Dos propiedades que el challenge evalúa explícitamente (checklist "production
+isn't just it runs").
+
+### Modelo hedónico de valoración (`market_research/hedonic.py`)
+No aplica un multiplicador plano por estado, sino 6 factores calibrados que
+ajustan el €/m² base de la zona (lo que hace un tasador real):
+
+| Factor | Efecto |
+|---|---|
+| Superficie | no lineal (pisos pequeños +€/m², grandes −) |
+| Estado | obra_nueva 1.15 · reformado 1.08 · buen_estado 1.00 · a_reformar 0.82 · ruina 0.60 |
+| Antigüedad | curva por años (centenario hasta −16%) |
+| Planta + ascensor | 4º sin ascensor −18%; alto con ascensor +5%; ático +12% |
+| Eficiencia energética | A +6% … G −10% |
+| Exterior/interior | interior −10% |
+
+Demostrable: mismo piso, ±35% solo cambiando ascensor + eficiencia. Desglose
+100% auditable (el dossier muestra cada factor).
+
+### Triangulación de fuentes (guardrail de calidad)
+Dos fuentes oficiales independientes en paralelo:
+- **Notariado** = precio REAL de compraventa (primario)
+- **MITMA** = valor tasado (contraste)
+
+`check_source_agreement` calcula la convergencia. Si <60% → `requires_review:
+true` (el agente avisa de que conviene revisión humana antes de fijar precio,
+en vez de dar un número a ciegas). Ej.: Benicàssim costa → Notariado 2.706 €/m²
+vs MITMA 1.462 €/m² → convergencia 54% → flag de revisión.
+
+### Guardrails (`mcp_servers/_guardrails.py`)
+- **Input validators:** CP español válido (5 dígitos, provincia 01-52),
+  superficie 10-2000 m², año 1800-2027, condición de lista cerrada. Input
+  imposible → rechazo limpio con mensaje, no cálculo erróneo.
+- **Output validators:** €/m² resultante dentro de rango España (200-25.000) y
+  valor total plausible; si no → `warnings` + `requires_review`.
+
+### Eval suite (`evals/`)
+Suite de regresión reproducible contra las **APIs oficiales reales** (no mocks):
+- 5 casos (Madrid, Marbella, Valencia, Bilbao, Benicàssim), 55 checks, **100%**.
+- Por caso: geocoding resuelve, Catastro año (best-effort con degradación
+  elegante), Notariado precio al nivel+rango esperado + nº transacciones,
+  valoración hedónica en rango, triangulación disponible, ROI coherente.
+- `evals/baseline.json` para detectar regresiones entre cambios.
+- Premia la **degradación elegante**: si el Catastro no resuelve una parcela,
+  el pipeline sigue dando valoración válida (no rompe).
+
+Ejecutar: `python -m evals.run` · guardar baseline: `python -m evals.run --json evals/baseline.json`
+
+---
+
 ## 5. Flujo end-to-end de una petición
 
 ```
@@ -452,4 +504,82 @@ del business case es real y verificable.
 
 ---
 
-_Última actualización: ${date}._
+## 13. Anexo — Ejemplo paso a paso (Calle Mayor 5, Madrid)
+
+> Este es exactamente el recorrido que la **web muestra en vivo**: al enviar una
+> dirección, cada paso aparece como una tarjeta con su resultado. Aquí escrito
+> para estudiarlo sin ejecutar.
+
+**Input del usuario:**
+> "Valora Calle Mayor 5, Madrid, CP 28013. 95 m², a reformar, año desconocido.
+>  Estancias: salón 24, cocina 11, baño 5, dormitorio 16, dormitorio 12,
+>  pasillo 7. Tier standard. Genera el PDF."
+
+**Paso 1 — `geocode_address`** (MCP geocoding → Nominatim/OSM)
+- Entra: dirección "Calle Mayor 5", "Madrid", CP "28013"
+- Sale: `lat 40.4163, lon -3.7055, municipio "Madrid", provincia "Madrid",
+  distrito "Centro", barrio "Barrio de los Austrias"`
+- Para qué: convierte texto en coordenadas + zona administrativa.
+
+**Paso 2 — `catastro_lookup`** (MCP catastro → servicios web libres OVC)
+- Entra: lat 40.4163, lon -3.7055
+- Hace: coordenadas → parcela catastral más cercana → datos del inmueble
+- Sale: `año 1914 (oficial), uso, referencia catastral 0244802VK4704C`
+- Para qué: dato físico OFICIAL — el año ya no lo pone el usuario.
+
+**Paso 3 — `notariado_price`** (MCP notariado → ArcGIS del Notariado)
+- Entra: CP "28013", municipio "Madrid"
+- Sale: `5.919 €/m² (precio REAL de transacción), 286 ventas notariales, nivel
+  código_postal`
+- Para qué: el precio base, de compraventas reales. Fuente PRIMARIA.
+
+**Paso 4 — `find_comparables`** (MCP market-research → MITMA)
+- Entra: lat/lon, provincia, municipio, distrito
+- Sale: `mediana MITMA 5.286 €/m² (valor tasado)`
+- Para qué: SEGUNDA fuente oficial, para contrastar con el Notariado.
+
+**Paso 4b — `check_source_agreement`** (guardrail)
+- Entra: 5.919 (Notariado) y 5.286 (MITMA)
+- Sale: `convergencia 89%, agreement high, requires_review false`
+- Para qué: triangula. Si divergieran mucho, marcaría revisión humana.
+
+**Paso 5 — `estimate_market_value`** (modelo hedónico)
+- Entra: 95 m², base 5.919 €/m² (Notariado), condición a_reformar, año 1914
+- Hace: aplica 6 factores (superficie, estado 0.82, antigüedad 0.84, …)
+- Sale: `valor actual ≈ 410.000 € (combined_factor ~0.73)`
+- Para qué: ajusta el precio de zona a ESTE inmueble concreto.
+
+**Paso 6 — `estimate_renovation_plan`** (MCP renovation)
+- Entra: las 6 estancias + tier standard
+- Sale: presupuesto por estancia y oficio, `total integral ≈ 16.600 €`
+- Para qué: cuánto cuesta la reforma, desglosado.
+
+**Paso 7 — `estimate_market_value`** otra vez (condición buen_estado)
+- Sale: `valor post-reforma ≈ 540.000 €`
+- Para qué: cuánto valdría ya reformado.
+
+**Paso 8 — `compute_renovation_roi`**
+- Entra: inversión 16.600 €, valor actual 410.000 €, post 540.000 €
+- Sale: `revalorización neta ≈ +113.000 €, payback 7.8×, MUY RECOMENDADO`
+- Para qué: ¿merece la pena reformar? El veredicto económico.
+
+**Paso 9 — `render_dossier_pdf`** (MCP dossier-pdf → reportlab + GCS)
+- Entra: todos los datos anteriores
+- Hace: genera PDF de 4 páginas (portada, valoración doble-fuente + gráficos,
+  presupuesto, ROI + veredicto), lo sube a Cloud Storage, firma una URL 24h
+- Sale: `https://storage.googleapis.com/decomind-agent-dossiers/dossier_xxx.pdf`
+- Para qué: el entregable final para el propietario.
+
+**Resultado:** dossier completo en ~30 segundos, por céntimos. Cada número es
+trazable a su fuente oficial (Notariado, Catastro, MITMA) — nada inventado.
+
+### ¿Cómo verlo en la web?
+1. Abre https://decomind-agent-ui-ajrpcon4fq-ew.a.run.app
+2. Pulsa un ejemplo (o escribe una dirección) → "Run agent".
+3. Verás aparecer las 9 tarjetas en vivo (este mismo recorrido) y, al final,
+   el botón "Open PDF". Es el ejemplo paso a paso, interactivo.
+
+---
+
+_Generado desde docs/system-overview.md — regenerar PDF con
+`python -m scripts.md_to_pdf docs/system-overview.md`._

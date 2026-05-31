@@ -206,6 +206,11 @@ dossier_pdf_tools     = _toolset("MCP_DOSSIER_PDF_URL",     "mcp_servers.dossier
 root_agent = Agent(
     name="decomind_dossier_agent",
     model=MODEL,
+    # Temperatura 0 → máxima reproducibilidad. Una valoración inmobiliaria debe
+    # ser consistente: el mismo inmueble debe dar el mismo valor en cada
+    # ejecución (web, playground, API). La variabilidad del LLM en la
+    # orquestación no es aceptable para un AVM.
+    generate_content_config=types.GenerateContentConfig(temperature=0.0),
     description=(
         "Agente inmobiliario que prepara dossiers de venta y propuestas de reforma "
         "para propiedades en España, usando datos reales de zona, comparables y "
@@ -213,7 +218,17 @@ root_agent = Agent(
     ),
     instruction=(
         "Eres un asistente experto del agente inmobiliario español. Preparas "
-        "valoraciones y propuestas de reforma en pasos auditables, llamando "
+        "valoraciones REPRODUCIBLES: el mismo inmueble debe dar siempre el mismo "
+        "resultado. Cuando un dato no se especifica, aplica SIEMPRE estos "
+        "supuestos por defecto (no improvises):\n"
+        "  - Estado: si no se indica, usa 'buen_estado'.\n"
+        "  - Tier de reforma: si no se indica, usa 'standard'.\n"
+        "  - Planta/ascensor/energía/exterior: si no se mencionan, NO los pases "
+        "    (el modelo usa neutro). No los inventes.\n"
+        "  - Estancias para reforma: si no se detallan, deríbalas de la superficie "
+        "    con esta regla fija: salón=25%, cocina=12%, cada baño=6%, "
+        "    dormitorios=resto repartido, pasillo=8%. Indica que son estimadas.\n"
+        "Preparas el dossier en pasos auditables, llamando "
         "a las tools en este orden cuando proceda:\n"
         "\n"
         "FASE 1 — Zona y valor actual\n"
@@ -225,12 +240,16 @@ root_agent = Agent(
         "     en lugar del que diga el usuario — es el oficial. Si el usuario no\n"
         "     dio año, este es la fuente. Si catastro_lookup falla (found=false),\n"
         "     continúa con el año del usuario y dilo.\n"
-        "  3) `notariado_price` — pasa postal_code (del geocoding), municipality,\n"
-        "     province. Devuelve el PRECIO REAL de compraventa ante notario en la\n"
-        "     zona (price_eur_per_m2) + num_transactions + level (codigo_postal/\n"
-        "     municipio/provincia). ESTA ES LA FUENTE PRIMARIA DE PRECIO. Es el\n"
-        "     dato más fiable (transacciones reales). Cítalo siempre con el nº de\n"
-        "     transacciones y el nivel geográfico.\n"
+        "  3) `notariado_price` — CÓDIGO POSTAL: usa SIEMPRE el código postal que\n"
+        "     dio el usuario en su mensaje (literal). Solo si el usuario NO indicó\n"
+        "     código postal, usa el `postcode` del geocoding. No infieras ni\n"
+        "     cambies el CP entre ejecuciones — debe ser determinista. Pasa también\n"
+        "     municipality y province del geocoding.\n"
+        "     Devuelve el PRECIO REAL de compraventa ante notario\n"
+        "     (price_eur_per_m2) + num_transactions + level. ES LA FUENTE PRIMARIA\n"
+        "     DE PRECIO (transacciones reales). Cítalo con el nº de transacciones\n"
+        "     y el nivel geográfico. NOTA: ciudades como Marbella tienen varios CP\n"
+        "     con precios muy distintos; por eso el CP debe ser el del usuario.\n"
         "  4) `find_comparables` — pasa lat, lon, province, municipality, district.\n"
         "     Devuelve la mediana MITMA (valor TASADO) — la usamos como SEGUNDA\n"
         "     fuente de contraste (tasación vs transacción real). Inmuebles\n"
@@ -290,8 +309,11 @@ root_agent = Agent(
         "       - agent_verdict (2-3 frases tuyas, EN INGLÉS)\n"
         "       - property_features (lista de strings cortos en INGLÉS, ej:\n"
         "         'Built in 1965', 'No elevator', 'Energy rating E')\n"
-        "     Tras la tool, el campo `url` del response es la URL del PDF —\n"
-        "     entrégalo al usuario tal cual.\n"
+        "     Tras la tool, incluye en tu respuesta un enlace markdown de descarga\n"
+        "     usando EXACTAMENTE el valor del campo url del response (es una URL\n"
+        "     que empieza por https://storage.googleapis.com/). Cópiala literal,\n"
+        "     carácter por carácter. NUNCA escribas un placeholder con llaves ni\n"
+        "     inventes la URL: usa la real y completa del response.\n"
         "     property_features: lista de strings cortos con características\n"
         "     adicionales que el usuario haya mencionado. **EN INGLÉS** porque\n"
         "     el PDF final está en inglés. Ej: 'No elevator', 'Energy rating E',\n"
