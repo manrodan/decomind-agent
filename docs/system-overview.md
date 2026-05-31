@@ -277,6 +277,46 @@ Ejecutar: `python -m evals.run` · guardar baseline: `python -m evals.run --json
 
 ---
 
+## 4quater. ¿Por qué MCP y no funciones acopladas (tipo Azure Functions)?
+
+Pregunta clave de arquitectura. Decomind V1 (producción, Azure) usa **Azure
+Functions**: funciones HTTP que el código llama explícitamente
+(`requests.post(...)`). El que orquesta es **el código** (imperativo, el flujo
+A→B→C está cableado). V2 (este challenge) usa **MCP**: el que orquesta es **el
+agente** (declarativo, Gemini decide qué tool llamar al vuelo).
+
+**MCP (Model Context Protocol)** es un estándar abierto (Anthropic, adoptado por
+Google/OpenAI) para que un LLM **descubra y use** herramientas. La palabra clave
+es *estándar*: cada MCP se autodescribe (nombre, parámetros, qué devuelve) y el
+modelo lee ese schema para saber usarla — sin que nadie programe la llamada.
+
+| | Azure Functions (V1) | MCP (V2) |
+|---|---|---|
+| Quién orquesta | El código (hardcoded) | El agente (decide al vuelo) |
+| Conoce las tools | Llamada escrita a mano | Las descubre (auto-descripción) |
+| Acoplamiento | Flujo cableado en el worker | Tools intercambiables sin tocar el agente |
+| Estándar | Propietario Azure | Abierto y portable (Gemini, Claude, …) |
+| Schema/validación | Manual | El MCP publica su JSON Schema |
+
+**Por qué importa aquí (no es moda):**
+1. El challenge lo pide literal: *"move from static code to declarative intent…
+   use MCP to securely connect to external tools"*. Es requisito/plus explícito.
+2. Desacoplamiento real: añadir `notariado` y `catastro` NO tocó el agente —
+   solo se levantaron dos MCP y el agente los descubrió. Con Azure Functions
+   habría que reescribir el orquestador.
+3. Auto-descripción: `notariado_price` se anuncia a Gemini (params, output);
+   una Azure Function no se auto-describe a un LLM.
+4. Portabilidad: los 6 MCP servirían igual con Claude u otro agente.
+
+**Honestidad:** MCP no es "mejor" universalmente. Para un pipeline FIJO y
+conocido (siempre A→B→C), las Azure Functions de V1 son más simples y rápidas
+(sin la decisión del LLM en medio). MCP brilla cuando quieres que un AGENTE
+decida el flujo, añadir/quitar capacidades sin reescribir, y un estándar
+abierto. No son rivales: son la **V1 imperativa** vs la **V2 agéntica** del
+mismo Dossier — exactamente la narrativa de refactor del Track 3.
+
+---
+
 ## 5. Flujo end-to-end de una petición
 
 ```
