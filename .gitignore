@@ -43,3 +43,8 @@ data/raw/
 
 # ADK deployment temp folders (timestamped)
 agent_engine_deployment_*
+agent_tmp*
+
+# Copias que deploy_frontend.ps1 mete en el build context (duplicados del código)
+frontend/agent/
+frontend/mcp_servers/

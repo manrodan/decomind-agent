@@ -300,8 +300,8 @@ def render_dossier_pdf(
     hedonic_factors: dict[str, Any] | None = None,
     cadastral_reference: str = "",
     cadastral_year: int = 0,
-    agency_name: str = "Decomind",
-    agency_primary_color: str = "#1F6FEB",
+    agency_name: str = "",
+    agency_primary_color: str = "",
     agency_contact: str = "",
     agency_phone: str = "",
     agency_email: str = "",
@@ -340,6 +340,14 @@ def render_dossier_pdf(
     filename = f"dossier_{ts}.pdf"
 
     by_room = by_room or []
+
+    # Branding white-label: si el agente no pasa nombre/color, se usan las
+    # variables de entorno DOSSIER_BRAND_NAME / DOSSIER_BRAND_COLOR (editables
+    # desde la consola de Cloud Run sin tocar código). Default: Decomind azul.
+    agency_name = agency_name or os.environ.get("DOSSIER_BRAND_NAME", "Decomind")
+    agency_primary_color = (
+        agency_primary_color or os.environ.get("DOSSIER_BRAND_COLOR", "#1F6FEB")
+    )
 
     agency = {
         "name": agency_name,
