@@ -1,0 +1,8 @@
+# Valuation API — deterministic engine, no LLM.
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+httpx>=0.27.0
+# mcp_servers/* modules define @mcp.tool()-decorated functions; importing them
+# requires FastMCP even though we call the functions directly (no MCP runtime).
+mcp>=1.0.0

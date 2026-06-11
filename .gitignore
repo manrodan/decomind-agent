@@ -45,6 +45,7 @@ data/raw/
 agent_engine_deployment_*
 agent_tmp*
 
-# Copias que deploy_frontend.ps1 mete en el build context (duplicados del código)
+# Copias que los scripts de deploy meten en el build context (duplicados)
 frontend/agent/
 frontend/mcp_servers/
+valuation_api/mcp_servers/
