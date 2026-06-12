@@ -22,6 +22,7 @@ Reutiliza la lógica ya escrita y testeada (evals 100%) en mcp_servers/.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp_servers.geocoding.server import geocode_address
@@ -37,6 +38,56 @@ from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.renovation.server import estimate_renovation_plan
 
 _FLOOR_UNKNOWN = -999
+
+# Títulos de anuncio que llegan como "dirección": "Piso en venta en Calle X",
+# "Ático en alquiler en Av. Y"... Nominatim no los geocodifica.
+_LISTING_TITLE_RE = re.compile(
+    r"^\s*(?:piso|atico|ático|casa|chalet|adosado|pareado|duplex|dúplex|"
+    r"apartamento|estudio|loft|bajo|vivienda|finca|local)\s+"
+    r"(?:en\s+(?:venta|alquiler)\s+)?en\s+(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _clean_listing_address(address: str) -> str:
+    """Extrae la calle de un título de anuncio. "Piso en venta en Calle
+    Cervantes, Monte Alto" → "Calle Cervantes". Conserva el número aunque
+    venga tras coma ("Calle Real, 12")."""
+    a = (address or "").strip()
+    m = _LISTING_TITLE_RE.match(a)
+    if m:
+        a = m.group(1).strip()
+    parts = [p.strip() for p in a.split(",") if p.strip()]
+    if len(parts) > 1 and parts[1][:1].isdigit():
+        return f"{parts[0]} {parts[1]}"  # "Calle Real, 12" → "Calle Real 12"
+    return parts[0] if parts else a
+
+
+def _geocode_with_fallback(
+    address: str, locality: str, province: str, postal_code: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Geocoding con degradación: dirección tal cual → título limpiado →
+    nivel zona (localidad/CP, sin calle). Devuelve (geo, precision) donde
+    precision es "street" | "locality" | None (no encontrado)."""
+    attempts: list[str] = []
+    raw = (address or "").strip()
+    if raw:
+        attempts.append(raw)
+    cleaned = _clean_listing_address(raw)
+    if cleaned and cleaned not in attempts:
+        attempts.append(cleaned)
+    for attempt in attempts:
+        geo = geocode_address(address=attempt, locality=locality,
+                              province=province, postal_code=postal_code)
+        if geo.get("found"):
+            return geo, "street"
+    if locality or postal_code:
+        geo = geocode_address(address=locality or postal_code,
+                              locality=locality, province=province,
+                              postal_code=postal_code)
+        if geo.get("found"):
+            return geo, "locality"
+    return {"found": False}, None
 
 
 def _tri(value: bool | None) -> int:
@@ -128,11 +179,9 @@ def run_valuation(
     condition_assumed = not condition
     condition = condition or "buen_estado"
 
-    # 1. Geocoding
-    geo = geocode_address(
-        address=address, locality=locality, province=province,
-        postal_code=postal_code,
-    )
+    # 1. Geocoding (con fallback: título de anuncio limpiado → nivel zona)
+    geo, precision = _geocode_with_fallback(address, locality, province,
+                                            postal_code or "")
     if not geo.get("found"):
         return {"found": False, "reason": "address_not_found", "input_address": address}
 
@@ -141,10 +190,15 @@ def run_valuation(
     muni = geo.get("municipality") or locality
     prov = geo.get("province") or province
     distr = geo.get("city_district") or ""
-    cp = (postal_code or geo.get("postcode") or "").strip()
+    # A nivel zona el postcode del geocoder es el del centro del municipio:
+    # mejor sin CP (el Notariado degrada limpio a nivel municipio).
+    geo_cp = geo.get("postcode") if precision == "street" else ""
+    cp = (postal_code or geo_cp or "").strip()
 
-    # 2. Catastro (año oficial — mejor que el del usuario o el del anuncio)
-    cat = catastro_lookup(lat, lon) if (lat and lon) else {"found": False}
+    # 2. Catastro (año oficial). Solo con dirección exacta: a nivel zona las
+    # coords son el centro del municipio y devolverían la parcela equivocada.
+    cat = (catastro_lookup(lat, lon)
+           if (lat and lon and precision == "street") else {"found": False})
     official_year = cat.get("year_built")
     year = official_year or year_built or 0
 
@@ -200,12 +254,20 @@ def run_valuation(
     # 7. Triangulación de fuentes (convergencia + flag revisión)
     agreement = check_source_agreement(nota_price or 0, mitma_price or 0)
 
+    warnings = list(val.get("warnings", []))
+    if precision == "locality":
+        warnings.append(
+            "Dirección no localizada con exactitud: valoración a nivel de "
+            "zona (sin año oficial del Catastro). Indica calle y número "
+            "reales para afinar.")
+
     result: dict[str, Any] = {
         "found": True,
         "address": geo.get("display_name") or address,
         "location": {
             "municipality": muni, "province": prov, "district": distr,
             "postal_code": cp, "lat": lat, "lon": lon,
+            "precision": precision,
         },
         "cadastral": {
             "found": bool(cat.get("found")),
@@ -221,7 +283,7 @@ def run_valuation(
             "hedonic_factors": val.get("factors"),
             "model": val.get("model"),
             "assumed_neutral_fields": assumed,
-            "warnings": val.get("warnings", []),
+            "warnings": warnings,
             "requires_review": val.get("requires_review", False),
         },
         # Inputs finales usados (tras anuncio + Catastro) — auditable en UI.

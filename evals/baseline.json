@@ -74,6 +74,42 @@
       }
     },
     {
+      "id": "address-cleaning",
+      "desc": "título de anuncio → calle geocodificable (offline)",
+      "checks": [
+        [
+          "clean[Piso en venta en Calle Cervant]",
+          true,
+          "got='Calle Cervantes' exp='Calle Cervantes'"
+        ],
+        [
+          "clean[Ático en alquiler en Avenida d]",
+          true,
+          "got='Avenida de la Marina 7' exp='Avenida de la Marina 7'"
+        ],
+        [
+          "clean[Casa en Calle Real, 12]",
+          true,
+          "got='Calle Real 12' exp='Calle Real 12'"
+        ],
+        [
+          "clean[Piso en venta en calle Cervant]",
+          true,
+          "got='calle Cervantes' exp='calle Cervantes'"
+        ],
+        [
+          "clean[Calle Mayor 5]",
+          true,
+          "got='Calle Mayor 5' exp='Calle Mayor 5'"
+        ]
+      ],
+      "passed": 5,
+      "total": 5,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {}
+    },
+    {
       "id": "parser/idealista-tipico",
       "desc": "parser de características (offline)",
       "checks": [
@@ -397,7 +433,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 6.1,
+      "elapsed_s": 5.1,
       "snapshot": {
         "year_built": 1914,
         "notariado_price": 5919.4,
@@ -428,22 +464,22 @@
         [
           "notariado_level_ok",
           true,
-          "level=municipio exp=['codigo_postal', 'municipio']"
+          "level=codigo_postal exp=['codigo_postal', 'municipio']"
         ],
         [
           "notariado_price_in_range",
           true,
-          "price=4570.9 exp=[2500, 6000]"
+          "price=5407.2 exp=[2500, 6000]"
         ],
         [
           "notariado_min_transactions",
           true,
-          "tx=4048 min=30"
+          "tx=682 min=30"
         ],
         [
           "current_value_in_range",
           true,
-          "value=502800 exp=[300000, 800000]"
+          "value=594800 exp=[300000, 800000]"
         ],
         [
           "catastro_official_or_graceful",
@@ -458,7 +494,7 @@
         [
           "triangulation_available",
           true,
-          "convergence=78%"
+          "convergence=66%"
         ],
         [
           "roi_recommendation_valid",
@@ -474,17 +510,17 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 18.3,
+      "elapsed_s": 2.3,
       "snapshot": {
         "year_built": null,
-        "notariado_price": 4570.9,
-        "notariado_level": "municipio",
-        "notariado_tx": 4048,
+        "notariado_price": 5407.2,
+        "notariado_level": "codigo_postal",
+        "notariado_tx": 682,
         "mitma_price": 3571,
-        "convergence_pct": 78,
-        "current_value": 502800,
+        "convergence_pct": 66,
+        "current_value": 594800,
         "reno_total": 20741.0,
-        "post_value": 502800,
+        "post_value": 594800,
         "roi_recommendation": "no_recomendado"
       }
     },
@@ -551,7 +587,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 4.9,
+      "elapsed_s": 4.3,
       "snapshot": {
         "year_built": 1905,
         "notariado_price": 2912.5,
@@ -628,7 +664,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 2.1,
+      "elapsed_s": 1.5,
       "snapshot": {
         "year_built": null,
         "notariado_price": 4644.5,
@@ -705,7 +741,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 3.7,
+      "elapsed_s": 3.8,
       "snapshot": {
         "year_built": 1915,
         "notariado_price": 2706.4,

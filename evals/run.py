@@ -266,6 +266,33 @@ def run_hedonic_sanity() -> dict[str, Any]:
     }
 
 
+def run_address_cleaning() -> dict[str, Any]:
+    """Limpieza de títulos de anuncio usados como dirección (offline)."""
+    from valuation_api.engine import _clean_listing_address
+    t0 = time.time()
+    cases = {
+        "Piso en venta en Calle Cervantes": "Calle Cervantes",
+        "Ático en alquiler en Avenida de la Marina 7": "Avenida de la Marina 7",
+        "Casa en Calle Real, 12": "Calle Real 12",
+        "Piso en venta en calle Cervantes, Monte Alto, A Coruña": "calle Cervantes",
+        "Calle Mayor 5": "Calle Mayor 5",
+    }
+    checks = []
+    for raw, expected in cases.items():
+        got = _clean_listing_address(raw)
+        checks.append((f"clean[{raw[:30]}]", got == expected,
+                       f"got={got!r} exp={expected!r}"))
+    passed = sum(1 for _, ok, _ in checks if ok)
+    return {
+        "id": "address-cleaning",
+        "desc": "título de anuncio → calle geocodificable (offline)",
+        "checks": checks, "passed": passed, "total": len(checks),
+        "score": round(passed / len(checks) * 100),
+        "elapsed_s": round(time.time() - t0, 1),
+        "snapshot": {},
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="id del caso a ejecutar")
@@ -280,6 +307,8 @@ def main() -> None:
     offline: list[dict[str, Any]] = []
     if not args.only or args.only == "hedonic-v2-sanity":
         offline.append(run_hedonic_sanity())
+    if not args.only or args.only == "address-cleaning":
+        offline.append(run_address_cleaning())
     offline += [run_parser_case(c) for c in PARSER_CASES
                 if not args.only or args.only == f"parser/{c['id']}"]
 
