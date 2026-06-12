@@ -28,9 +28,9 @@ from pydantic import BaseModel, Field
 
 # Flexible import: package layout in local dev, flat layout in the container.
 try:
-    from valuation_api.engine import run_valuation
+    from valuation_api.engine import resolve_location, run_valuation
 except ImportError:  # container: app.py and engine.py at /app root
-    from engine import run_valuation
+    from engine import resolve_location, run_valuation
 from mcp_servers.market_research.features_parser import parse_property_features
 
 logging.basicConfig(level=logging.INFO,
@@ -43,7 +43,7 @@ app = FastAPI(
     title="Decomind Valuation API",
     description="Deterministic Spanish real-estate valuation (Notariado + MITMA "
                 "+ Catastro + hedonic model). No LLM.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
@@ -89,6 +89,13 @@ class ValuationRequest(BaseModel):
 class ParseFeaturesRequest(BaseModel):
     features: list[str] = Field(default_factory=list)
     description: str = ""
+
+
+class GeocodeRequest(BaseModel):
+    address: str = ""
+    locality: str = ""
+    province: str = ""
+    postal_code: str = ""
 
 
 def _check_key(x_api_key: str | None) -> None:
@@ -160,3 +167,24 @@ async def parse_features(
     """
     _check_key(x_api_key)
     return parse_property_features(req.features, req.description)
+
+
+@app.post("/geocode")
+async def geocode(
+    req: GeocodeRequest,
+    x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
+) -> dict[str, Any]:
+    """Resuelve municipio/provincia/CP reales de una dirección (sin valorar).
+
+    Para prefill: corrige provincia o CP arrastrados de otra vivienda antes
+    de que el usuario pida la valoración.
+    """
+    _check_key(x_api_key)
+    try:
+        return resolve_location(
+            address=req.address, locality=req.locality,
+            province=req.province, postal_code=req.postal_code,
+        )
+    except Exception as exc:
+        logger.exception("Geocode failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))

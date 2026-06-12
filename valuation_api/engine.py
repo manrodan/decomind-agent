@@ -123,6 +123,37 @@ def _same_province(a: str, b: str) -> bool | None:
     return None
 
 
+def resolve_location(
+    address: str = "", locality: str = "", province: str = "",
+    postal_code: str = "",
+) -> dict[str, Any]:
+    """Resuelve la ubicación SIN valorar (para prefill de formularios):
+    geocoding tolerante a datos mezclados + provincia/CP coherentes.
+    El CP solo se devuelve si es fiable (del usuario validado o del geocoder
+    a nivel calle)."""
+    user_cp = (postal_code or "").strip()
+    if user_cp and province and cp_matches_province(user_cp, province) is False:
+        user_cp = ""
+    geo, precision = _geocode_with_fallback(address, locality, province, user_cp)
+    if not geo.get("found"):
+        return {"found": False}
+    geo_prov = geo.get("province") or ""
+    prov = geo_prov or province
+    geo_cp = ((geo.get("postcode") or "") if precision == "street" else "").strip()
+    cp = (user_cp or geo_cp or "").strip()
+    if cp and cp_matches_province(cp, prov) is False:
+        cp = (geo_cp if geo_cp and cp_matches_province(geo_cp, prov) is not False
+              else "")
+    return {
+        "found": True,
+        "precision": precision,
+        "municipality": geo.get("municipality") or locality,
+        "province": prov,
+        "postal_code": cp,
+        "display_name": geo.get("display_name"),
+    }
+
+
 def _tri(value: bool | None) -> int:
     """bool|None → sentinel int del tool MCP (-1 desconocido, 0 no, 1 sí)."""
     return -1 if value is None else int(bool(value))
