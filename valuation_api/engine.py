@@ -36,6 +36,11 @@ from mcp_servers.market_research.server import (
 )
 from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.renovation.server import estimate_renovation_plan
+from mcp_servers._guardrails import (
+    PROVINCE_ALIASES_BY_CP_PREFIX,
+    _norm_province,
+    cp_matches_province,
+)
 
 _FLOOR_UNKNOWN = -999
 
@@ -66,28 +71,56 @@ def _clean_listing_address(address: str) -> str:
 def _geocode_with_fallback(
     address: str, locality: str, province: str, postal_code: str,
 ) -> tuple[dict[str, Any], str | None]:
-    """Geocoding con degradación: dirección tal cual → título limpiado →
-    nivel zona (localidad/CP, sin calle). Devuelve (geo, precision) donde
-    precision es "street" | "locality" | None (no encontrado)."""
-    attempts: list[str] = []
+    """Geocoding con degradación progresiva. Una provincia o CP equivocados
+    (datos arrastrados de otra vivienda) envenenan la query de Nominatim,
+    así que los intentos van soltando lastre:
+      calle tal cual → título limpiado → calle sin provincia → calle sin
+      provincia ni CP → nivel zona (localidad) → zona sin provincia ni CP.
+    Devuelve (geo, precision): "street" | "locality" | None (no encontrado)."""
     raw = (address or "").strip()
-    if raw:
-        attempts.append(raw)
     cleaned = _clean_listing_address(raw)
-    if cleaned and cleaned not in attempts:
-        attempts.append(cleaned)
-    for attempt in attempts:
-        geo = geocode_address(address=attempt, locality=locality,
-                              province=province, postal_code=postal_code)
+    best = cleaned or raw
+    cp = (postal_code or "").strip()
+
+    attempts: list[tuple[str, str, str, str]] = []  # (addr, prov, cp, precision)
+    if raw:
+        attempts.append((raw, province, cp, "street"))
+    if cleaned and cleaned != raw:
+        attempts.append((cleaned, province, cp, "street"))
+    if best and province:
+        attempts.append((best, "", cp, "street"))   # provincia quizá errónea
+    if best and cp:
+        attempts.append((best, "", "", "street"))   # CP quizá erróneo
+    if locality or cp:
+        zone = locality or cp
+        attempts.append((zone, province, cp, "locality"))
+        attempts.append((zone, "", "", "locality"))
+
+    seen: set[tuple[str, str, str]] = set()
+    for addr, prov, pc, precision in attempts:
+        key = (addr, prov, pc)
+        if not addr or key in seen:
+            continue
+        seen.add(key)
+        geo = geocode_address(address=addr, locality=locality,
+                              province=prov, postal_code=pc)
         if geo.get("found"):
-            return geo, "street"
-    if locality or postal_code:
-        geo = geocode_address(address=locality or postal_code,
-                              locality=locality, province=province,
-                              postal_code=postal_code)
-        if geo.get("found"):
-            return geo, "locality"
+            return geo, precision
     return {"found": False}, None
+
+
+def _same_province(a: str, b: str) -> bool | None:
+    """¿Son la misma provincia? Tolera variantes ("La Coruña"/"A Coruña",
+    "Castellón"/"Castelló"). None si algún nombre falta o no se reconoce."""
+    na, nb = _norm_province(a), _norm_province(b)
+    if not na or not nb:
+        return None
+    if na == nb:
+        return True
+    for aliases in PROVINCE_ALIASES_BY_CP_PREFIX.values():
+        if na in aliases:
+            return nb in aliases
+    return None
 
 
 def _tri(value: bool | None) -> int:
@@ -179,21 +212,50 @@ def run_valuation(
     condition_assumed = not condition
     condition = condition or "buen_estado"
 
-    # 1. Geocoding (con fallback: título de anuncio limpiado → nivel zona)
-    geo, precision = _geocode_with_fallback(address, locality, province,
-                                            postal_code or "")
+    # 0b. Coherencia CP ↔ provincia ANTES de geocodificar: un CP de otra
+    # provincia contamina la query y, peor, llevaría al Notariado a devolver
+    # precios de otra provincia.
+    pre_warnings: list[str] = []
+    user_cp = (postal_code or "").strip()
+    if user_cp and province and cp_matches_province(user_cp, province) is False:
+        pre_warnings.append(
+            f"El código postal {user_cp} no corresponde a la provincia "
+            f"{province}: se ha ignorado.")
+        user_cp = ""
+
+    # 1. Geocoding (con fallback: título de anuncio limpiado → sin provincia
+    # → nivel zona)
+    geo, precision = _geocode_with_fallback(address, locality, province, user_cp)
     if not geo.get("found"):
         return {"found": False, "reason": "address_not_found", "input_address": address}
 
     lat = float(geo.get("lat") or 0)
     lon = float(geo.get("lon") or 0)
     muni = geo.get("municipality") or locality
-    prov = geo.get("province") or province
+    geo_prov = geo.get("province") or ""
+    prov = geo_prov or province
+    if province and _same_province(province, geo_prov) is False:
+        pre_warnings.append(
+            f"La provincia indicada ({province}) no coincide con la ubicación "
+            f"encontrada ({geo_prov}): se ha usado {geo_prov}.")
     distr = geo.get("city_district") or ""
     # A nivel zona el postcode del geocoder es el del centro del municipio:
     # mejor sin CP (el Notariado degrada limpio a nivel municipio).
-    geo_cp = geo.get("postcode") if precision == "street" else ""
-    cp = (postal_code or geo_cp or "").strip()
+    geo_cp = ((geo.get("postcode") or "") if precision == "street" else "").strip()
+    cp = (user_cp or geo_cp or "").strip()
+    if cp and cp_matches_province(cp, prov) is False:
+        # Si el geocoder encontró la dirección, su CP es el bueno: recupéralo.
+        fallback_cp = (geo_cp if geo_cp and geo_cp != cp
+                       and cp_matches_province(geo_cp, prov) is not False else "")
+        if fallback_cp:
+            pre_warnings.append(
+                f"El código postal {cp} no corresponde a {prov}: se ha usado "
+                f"el {fallback_cp} de la dirección localizada.")
+        else:
+            pre_warnings.append(
+                f"El código postal {cp} no corresponde a {prov}: se ha "
+                f"ignorado (precio a nivel de municipio).")
+        cp = fallback_cp
 
     # 2. Catastro (año oficial). Solo con dirección exacta: a nivel zona las
     # coords son el centro del municipio y devolverían la parcela equivocada.
@@ -254,7 +316,7 @@ def run_valuation(
     # 7. Triangulación de fuentes (convergencia + flag revisión)
     agreement = check_source_agreement(nota_price or 0, mitma_price or 0)
 
-    warnings = list(val.get("warnings", []))
+    warnings = pre_warnings + list(val.get("warnings", []))
     if precision == "locality":
         warnings.append(
             "Dirección no localizada con exactitud: valoración a nivel de "

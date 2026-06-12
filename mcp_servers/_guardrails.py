@@ -33,6 +33,56 @@ VALID_ORIENTATIONS = {
     "norte", "noreste", "este", "sureste", "sur", "suroeste", "oeste", "noroeste",
 }
 
+# Prefijo INE del CP (2 primeros dígitos) → alias normalizados (sin acentos,
+# minúsculas) de la provincia, incluyendo variantes cooficiales e históricas.
+# Permite detectar un CP que no corresponde a la provincia del inmueble (si se
+# usara, el Notariado devolvería precios de OTRA provincia).
+PROVINCE_ALIASES_BY_CP_PREFIX: dict[str, set[str]] = {
+    "01": {"alava", "araba"}, "02": {"albacete"},
+    "03": {"alicante", "alacant"}, "04": {"almeria"}, "05": {"avila"},
+    "06": {"badajoz"},
+    "07": {"baleares", "illes balears", "islas baleares"},
+    "08": {"barcelona"}, "09": {"burgos"}, "10": {"caceres"},
+    "11": {"cadiz"}, "12": {"castellon", "castello"},
+    "13": {"ciudad real"}, "14": {"cordoba"},
+    "15": {"a coruna", "la coruna", "coruna"}, "16": {"cuenca"},
+    "17": {"girona", "gerona"}, "18": {"granada"}, "19": {"guadalajara"},
+    "20": {"guipuzcoa", "gipuzkoa"}, "21": {"huelva"}, "22": {"huesca"},
+    "23": {"jaen"}, "24": {"leon"}, "25": {"lleida", "lerida"},
+    "26": {"la rioja"}, "27": {"lugo"}, "28": {"madrid"}, "29": {"malaga"},
+    "30": {"murcia", "region de murcia"},
+    "31": {"navarra", "nafarroa", "comunidad foral de navarra"},
+    "32": {"ourense", "orense"},
+    "33": {"asturias", "principado de asturias"}, "34": {"palencia"},
+    "35": {"las palmas"}, "36": {"pontevedra"}, "37": {"salamanca"},
+    "38": {"santa cruz de tenerife", "tenerife"}, "39": {"cantabria"},
+    "40": {"segovia"}, "41": {"sevilla"}, "42": {"soria"},
+    "43": {"tarragona"}, "44": {"teruel"}, "45": {"toledo"},
+    "46": {"valencia"}, "47": {"valladolid"},
+    "48": {"vizcaya", "bizkaia"}, "49": {"zamora"}, "50": {"zaragoza"},
+    "51": {"ceuta"}, "52": {"melilla"},
+}
+
+
+def _norm_province(name: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", name or "")
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower().strip()
+
+
+def cp_matches_province(cp: str, province: str) -> bool | None:
+    """¿El CP corresponde a la provincia? True/False, o None si no se puede
+    determinar (CP inválido, provincia vacía o nombre no reconocido)."""
+    cp = (cp or "").strip()
+    if not (cp.isdigit() and len(cp) == 5):
+        return None
+    aliases = PROVINCE_ALIASES_BY_CP_PREFIX.get(cp[:2])
+    prov = _norm_province(province)
+    if not aliases or not prov:
+        return None
+    return prov in aliases
+
 MAX_FLOOR = 60
 MAX_BEDROOMS = 20
 MAX_BATHROOMS = 15

@@ -433,7 +433,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 5.1,
+      "elapsed_s": 6.9,
       "snapshot": {
         "year_built": 1914,
         "notariado_price": 5919.4,
@@ -510,7 +510,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 2.3,
+      "elapsed_s": 4.2,
       "snapshot": {
         "year_built": null,
         "notariado_price": 5407.2,
@@ -587,7 +587,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 4.3,
+      "elapsed_s": 7.2,
       "snapshot": {
         "year_built": 1905,
         "notariado_price": 2912.5,
@@ -664,7 +664,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 1.5,
+      "elapsed_s": 1.8,
       "snapshot": {
         "year_built": null,
         "notariado_price": 4644.5,
@@ -741,7 +741,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 3.8,
+      "elapsed_s": 4.0,
       "snapshot": {
         "year_built": 1915,
         "notariado_price": 2706.4,
