@@ -11,6 +11,67 @@ se actualizan mensualmente. Rangos amplios = robustez; estrechos = precisión.
 
 from __future__ import annotations
 
+# ── Casos offline del parser de características (Idealista/Clipper) ─────────
+# Formatos reales tal como los captura la extensión: el parser debe extraer
+# exactamente estos campos. Sin red: rápidos y 100% deterministas.
+PARSER_CASES: list[dict] = [
+    {
+        "id": "idealista-tipico",
+        "features": [
+            "90 m² construidos, 78 m² útiles", "3 habitaciones", "2 baños",
+            "Terraza", "Plaza de garaje incluida en el precio",
+            "Segunda mano/buen estado", "Armarios empotrados",
+            "Orientación sur", "Construido en 1995", "Trastero",
+            "Planta 4ª exterior con ascensor", "Consumo: E (135 kWh/m² año)",
+        ],
+        "expect": {
+            "surface_m2": 90.0, "bedrooms": 3, "bathrooms": 2,
+            "has_terrace": True, "has_garage": True, "has_storage_room": True,
+            "condition": "buen_estado", "orientation": "sur",
+            "year_built": 1995, "floor": 4, "exterior": True,
+            "has_elevator": True, "energy_rating": "E",
+        },
+    },
+    {
+        "id": "sin-ascensor-interior",
+        "features": [
+            "65 m² construidos", "2 habitaciones", "1 baño",
+            "Segunda mano/para reformar", "Planta 3ª interior sin ascensor",
+            "Orientación norte",
+        ],
+        "expect": {
+            "surface_m2": 65.0, "bedrooms": 2, "bathrooms": 1,
+            "condition": "a_reformar", "floor": 3, "exterior": False,
+            "has_elevator": False, "orientation": "norte",
+        },
+    },
+    {
+        "id": "atico-obra-nueva-combinada",
+        "features": [
+            "120 m² construidos", "4 habitaciones", "2 baños", "Ático",
+            "Promoción de obra nueva", "Piscina", "Orientación sur, oeste",
+            "Con ascensor",
+        ],
+        "expect": {
+            "is_attic": True, "condition": "obra_nueva", "has_pool": True,
+            "orientation": "suroeste", "has_elevator": True,
+            "bedrooms": 4, "bathrooms": 2,
+        },
+    },
+    {
+        "id": "bajo-garaje-opcional",
+        "features": [
+            "Bajo exterior con ascensor",
+            "Plaza de garaje opcional por 18.000 €",
+            "Calificación energética: D",
+        ],
+        "expect": {
+            "floor": 0, "exterior": True, "has_elevator": True,
+            "has_garage": False, "energy_rating": "D",
+        },
+    },
+]
+
 CASES: list[dict] = [
     {
         "id": "madrid-centro",

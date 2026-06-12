@@ -28,7 +28,7 @@ import json
 import time
 from typing import Any
 
-from evals.dataset import CASES
+from evals.dataset import CASES, PARSER_CASES
 
 # Tools (llamadas Python directas — rápido y determinista salvo APIs externas)
 from mcp_servers.geocoding.server import geocode_address
@@ -39,6 +39,8 @@ from mcp_servers.market_research.server import (
     estimate_market_value,
     compute_renovation_roi,
 )
+from mcp_servers.market_research.features_parser import parse_property_features
+from mcp_servers.market_research.hedonic import value_breakdown
 from mcp_servers.renovation.server import estimate_renovation_plan
 
 
@@ -116,7 +118,7 @@ def run_case(case: dict) -> dict[str, Any]:
                    year_ok or graceful,
                    f"year={year} ({'official' if year_ok else 'graceful-degradation' if graceful else 'FAIL'})"))
     checks.append(("hedonic_factors_present",
-                   isinstance(val.get("factors"), dict) and len(val["factors"]) == 6,
+                   isinstance(val.get("factors"), dict) and len(val["factors"]) == 8,
                    f"factors={list((val.get('factors') or {}).keys())}"))
 
     # Convergencia triangulación (notariado vs mitma)
@@ -174,6 +176,96 @@ def run_case(case: dict) -> dict[str, Any]:
     }
 
 
+def run_parser_case(case: dict) -> dict[str, Any]:
+    """Caso offline del parser de características: campo a campo."""
+    t0 = time.time()
+    out = parse_property_features(case["features"])
+    fields = out.get("fields", {})
+    checks: list[tuple[str, bool, str]] = []
+    for key, expected in case["expect"].items():
+        got = fields.get(key)
+        checks.append((f"parse_{key}", got == expected,
+                       f"got={got!r} exp={expected!r}"))
+    passed = sum(1 for _, ok, _ in checks if ok)
+    return {
+        "id": f"parser/{case['id']}",
+        "desc": "parser de características (offline)",
+        "checks": checks, "passed": passed, "total": len(checks),
+        "score": round(passed / len(checks) * 100),
+        "elapsed_s": round(time.time() - t0, 1),
+        "snapshot": {"fields": fields, "unmatched": out.get("unmatched")},
+    }
+
+
+def run_hedonic_sanity() -> dict[str, Any]:
+    """Sanidad del modelo hedónico v2 (offline): ordenaciones que debe cumplir.
+
+    base fija 3.000 €/m² y 90 m² — comprobamos relaciones, no valores.
+    """
+    t0 = time.time()
+    base = dict(surface_m2=90, base_eur_per_m2=3000)
+    v = lambda **kw: value_breakdown(**base, **kw)["value_eur"]  # noqa: E731
+    checks: list[tuple[str, bool, str]] = []
+
+    # Tri-estado ascensor: desconocido es NEUTRO, no optimista (bug v1).
+    sin = v(floor=5, has_elevator=False)
+    desc = v(floor=5, has_elevator=None)
+    con = v(floor=5, has_elevator=True)
+    checks.append(("elevator_tristate_order", sin < desc < con,
+                   f"sin={sin} desconocido={desc} con={con}"))
+    checks.append(("elevator_unknown_neutral",
+                   value_breakdown(**base, floor=5)["factors"]["floor_elevator"] == 1.0,
+                   "floor=5 sin dato de ascensor → factor 1.0"))
+
+    # Orientación: norte < neutro < sur; interior penaliza siempre.
+    checks.append(("orientation_north_south",
+                   v(exterior=True, orientation="norte") < v(exterior=True)
+                   < v(exterior=True, orientation="sur"),
+                   "norte < sin orientación < sur"))
+    checks.append(("interior_penalizes",
+                   v(exterior=False, orientation="sur") < v(exterior=True),
+                   "interior (aun con sur) < exterior"))
+
+    # Distribución: 2º baño premia en ≥80m²; baño único en piso grande penaliza;
+    # sobredivisión (habitaciones enanas) penaliza.
+    checks.append(("second_bathroom_premium",
+                   v(bathrooms=2, bedrooms=3) > v(bathrooms=1, bedrooms=3),
+                   "2 baños > 1 baño (90 m²)"))
+    big = dict(surface_m2=120, base_eur_per_m2=3000)
+    checks.append(("single_bath_large_flat_penalty",
+                   value_breakdown(**big, bathrooms=1)["value_eur"]
+                   < value_breakdown(**big)["value_eur"],
+                   "120 m² con 1 baño < 120 m² sin dato"))
+    checks.append(("overdivision_penalty",
+                   v(bedrooms=6) < v(bedrooms=3),
+                   "90 m² / 6 hab (15 m²/hab) < 90 m² / 3 hab"))
+
+    # Extras premian solo si constan; desconocido = neutro.
+    checks.append(("extras_premium",
+                   v(has_terrace=True, has_garage=True) > v(),
+                   "terraza+garaje > sin extras"))
+
+    # Estructura del desglose.
+    full = value_breakdown(**base)
+    checks.append(("model_v2_8_factors",
+                   full["model"] == "hedonic_v2" and len(full["factors"]) == 8,
+                   f"model={full['model']} factors={list(full['factors'])}"))
+    checks.append(("unknown_inputs_reported",
+                   "has_elevator" in full["unknown_inputs"]
+                   and "orientation" in full["unknown_inputs"],
+                   f"unknown={full['unknown_inputs']}"))
+
+    passed = sum(1 for _, ok, _ in checks if ok)
+    return {
+        "id": "hedonic-v2-sanity",
+        "desc": "ordenaciones del modelo hedónico v2 (offline)",
+        "checks": checks, "passed": passed, "total": len(checks),
+        "score": round(passed / len(checks) * 100),
+        "elapsed_s": round(time.time() - t0, 1),
+        "snapshot": {"factors_90m2_neutro": full["factors"]},
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="id del caso a ejecutar")
@@ -184,9 +276,26 @@ def main() -> None:
     cases = [c for c in CASES if not args.only or c["id"] == args.only]
     results = []
 
+    # Bloque offline (sin red): parser + sanidad del modelo hedónico v2.
+    offline: list[dict[str, Any]] = []
+    if not args.only or args.only == "hedonic-v2-sanity":
+        offline.append(run_hedonic_sanity())
+    offline += [run_parser_case(c) for c in PARSER_CASES
+                if not args.only or args.only == f"parser/{c['id']}"]
+
     print(f"\n{'='*78}")
-    print(f"  DECOMIND AGENT — EVAL SUITE  ({len(cases)} casos)")
+    print(f"  DECOMIND AGENT — EVAL SUITE  ({len(cases)} casos + "
+          f"{len(offline)} offline)")
     print(f"{'='*78}")
+
+    for r in offline:
+        results.append(r)
+        bar = "█" * (r["score"] // 10) + "░" * (10 - r["score"] // 10)
+        print(f"\n▶ {r['id']}: {r['desc']}")
+        print(f"  {bar}  {r['passed']}/{r['total']} checks  ({r['score']}%)")
+        for n, ok, d in r["checks"]:
+            if args.verbose or not ok:
+                print(f"      {'✓' if ok else '✗'} {n}: {d}")
 
     for case in cases:
         print(f"\n▶ {case['id']}: {case['desc']}")

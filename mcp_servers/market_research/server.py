@@ -1,10 +1,12 @@
 """
 MCP server: Market Research (comparables + valoración + ROI de reforma).
 
-Tres tools:
+Tools:
   - find_comparables: devuelve 5-10 inmuebles similares en la zona.
-  - estimate_market_value: valora un inmueble a partir de comparables.
+  - estimate_market_value: valora un inmueble (modelo hedónico v2).
+  - parse_property_features: anuncio Idealista/Clipper → inputs del modelo.
   - compute_renovation_roi: revaloriza tras inversión en reforma.
+  - check_source_agreement: triangulación Notariado vs MITMA.
 
 Estado de comparables (MVP del challenge):
   Generador realista basado en mediana €/m² por provincia/distrito (datos públicos
@@ -38,6 +40,9 @@ from mcp_servers.market_research.data import (
     resolve_base_price,
 )
 from mcp_servers.market_research.hedonic import value_breakdown
+from mcp_servers.market_research.features_parser import (
+    parse_property_features as parse_features,
+)
 from mcp_servers._guardrails import (
     assess_source_agreement,
     validate_inputs,
@@ -206,16 +211,26 @@ def estimate_market_value(
     condition: str = "buen_estado",
     year_built: int = 0,
     floor: int = -999,
-    has_elevator: bool = True,
+    has_elevator: int = -1,
     is_attic: bool = False,
     energy_rating: str = "",
-    exterior: bool = True,
+    exterior: int = -1,
+    orientation: str = "",
+    bedrooms: int = 0,
+    bathrooms: int = 0,
+    has_terrace: bool = False,
+    has_garage: bool = False,
+    has_storage_room: bool = False,
+    has_pool: bool = False,
 ) -> dict[str, Any]:
-    """Estima el valor de mercado con un modelo HEDÓNICO profesional.
+    """Estima el valor de mercado con un modelo HEDÓNICO profesional (v2).
 
-    A diferencia de un multiplicador plano, ajusta el €/m² de la zona por 6
+    A diferencia de un multiplicador plano, ajusta el €/m² de la zona por 8
     factores que un tasador real considera: superficie (no lineal), estado,
-    antigüedad, planta+ascensor, eficiencia energética y exterior/interior.
+    antigüedad, planta+ascensor, eficiencia energética, orientación/exterior,
+    distribución (baños y densidad de habitaciones) y extras (terraza, garaje,
+    trastero, piscina). Lo desconocido aplica factor NEUTRO y se reporta en
+    `unknown_inputs` — nunca se asume optimistamente.
 
     Args:
         surface_m2: Superficie construida en m².
@@ -223,18 +238,29 @@ def estimate_market_value(
         condition: "obra_nueva"|"reformado"|"buen_estado"|"a_reformar"|"ruina".
         year_built: Año de construcción. 0 = desconocido. (Idealmente del Catastro.)
         floor: Planta. 0 = bajo. -999 = desconocido (no ajusta).
-        has_elevator: ¿Tiene ascensor? Relevante combinado con floor.
+        has_elevator: 1 = sí, 0 = no, -1 = desconocido (neutro).
         is_attic: ¿Es ático? (premium).
         energy_rating: Letra "A".."G". "" = desconocido.
-        exterior: ¿Exterior? False = interior (penaliza).
+        exterior: 1 = exterior, 0 = interior (penaliza), -1 = desconocido.
+        orientation: "norte"|"noreste"|"este"|"sureste"|"sur"|"suroeste"|
+            "oeste"|"noroeste". "" = desconocida (neutro).
+        bedrooms: Nº de habitaciones. 0 = desconocido.
+        bathrooms: Nº de baños. 0 = desconocido.
+        has_terrace: ¿Terraza? Solo pasar True si consta.
+        has_garage: ¿Plaza de garaje incluida en el precio?
+        has_storage_room: ¿Trastero?
+        has_pool: ¿Piscina / zonas comunes?
 
     Returns:
         {value_eur, value_eur_per_m2, base_eur_per_m2, combined_factor,
-         factors{...}, model, assumptions}  — desglose 100% auditable.
+         factors{...}, unknown_inputs, model, assumptions}  — 100% auditable.
     """
     # Guardrails de entrada: rechaza datos imposibles antes de calcular.
     input_errors = validate_inputs(
         surface_m2=surface_m2, year_built=year_built or None, condition=condition,
+        orientation=orientation or None,
+        floor=None if floor == -999 else floor,
+        bedrooms=bedrooms or None, bathrooms=bathrooms or None,
     )
     if input_errors:
         return {
@@ -249,10 +275,17 @@ def estimate_market_value(
         condition=condition,
         year_built=year_built or None,
         floor=None if floor == -999 else floor,
-        has_elevator=has_elevator,
+        has_elevator=None if has_elevator < 0 else bool(has_elevator),
         is_attic=is_attic,
         energy_rating=energy_rating or None,
-        exterior=exterior,
+        exterior=None if exterior < 0 else bool(exterior),
+        orientation=orientation or None,
+        bedrooms=bedrooms or None,
+        bathrooms=bathrooms or None,
+        has_terrace=has_terrace,
+        has_garage=has_garage,
+        has_storage_room=has_storage_room,
+        has_pool=has_pool,
     )
 
     # Guardrails de salida: marca si la valoración cae fuera de rangos de mercado.
@@ -264,12 +297,44 @@ def estimate_market_value(
         "condition": condition,
         "year_built": year_built or None,
         "floor": None if floor == -999 else floor,
-        "has_elevator": has_elevator,
+        "has_elevator": None if has_elevator < 0 else bool(has_elevator),
         "is_attic": is_attic,
         "energy_rating": energy_rating or None,
-        "exterior": exterior,
+        "exterior": None if exterior < 0 else bool(exterior),
+        "orientation": orientation or None,
+        "bedrooms": bedrooms or None,
+        "bathrooms": bathrooms or None,
+        "extras": {
+            "has_terrace": has_terrace, "has_garage": has_garage,
+            "has_storage_room": has_storage_room, "has_pool": has_pool,
+        },
     }
     return bd
+
+
+@mcp.tool()
+def parse_property_features(
+    features: list[str] | None = None,
+    description: str = "",
+) -> dict[str, Any]:
+    """Convierte características de un anuncio (Idealista/Clipper Decomind) en
+    los inputs estructurados de `estimate_market_value`.
+
+    Determinista (regex, sin LLM): mismo anuncio → mismos campos. Lo que no
+    se reconoce vuelve en `unmatched` para completarlo a mano.
+
+    Args:
+        features: Lista de características tal cual ("3 habitaciones",
+            "Planta 4ª exterior con ascensor", "Orientación sur", "Terraza"…).
+        description: Texto libre del anuncio (solo rellena lo que falte).
+
+    Returns:
+        {fields: {bedrooms?, bathrooms?, floor?, has_elevator?, exterior?,
+         orientation?, condition?, energy_rating?, surface_m2?, year_built?,
+         is_attic?, has_terrace?, has_garage?, has_storage_room?, has_pool?},
+         matched: [...], unmatched: [...]}
+    """
+    return parse_features(features, description)
 
 
 @mcp.tool()

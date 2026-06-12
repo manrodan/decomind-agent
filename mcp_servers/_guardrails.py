@@ -29,6 +29,14 @@ VALID_CONDITIONS = {
     "obra_nueva", "nuevo", "reformado", "buen_estado", "a_reformar", "ruina",
 }
 
+VALID_ORIENTATIONS = {
+    "norte", "noreste", "este", "sureste", "sur", "suroeste", "oeste", "noroeste",
+}
+
+MAX_FLOOR = 60
+MAX_BEDROOMS = 20
+MAX_BATHROOMS = 15
+
 # Umbral de convergencia entre fuentes oficiales por debajo del cual se
 # recomienda revisión humana (transacción real muy lejos de la tasación).
 CONVERGENCE_REVIEW_THRESHOLD = 60  # %
@@ -71,8 +79,36 @@ def validate_condition(condition: str) -> str | None:
     return None
 
 
+def validate_orientation(orientation: str) -> str | None:
+    if orientation and orientation.strip().lower() not in VALID_ORIENTATIONS:
+        return (f"orientation desconocida: '{orientation}' "
+                f"(válidas: {sorted(VALID_ORIENTATIONS)})")
+    return None
+
+
+def validate_floor(floor: int) -> str | None:
+    if not (0 <= floor <= MAX_FLOOR):
+        return f"floor fuera de rango (0-{MAX_FLOOR}): {floor}"
+    return None
+
+
+def validate_bedrooms(bedrooms: int) -> str | None:
+    if not (1 <= bedrooms <= MAX_BEDROOMS):
+        return f"bedrooms fuera de rango (1-{MAX_BEDROOMS}): {bedrooms}"
+    return None
+
+
+def validate_bathrooms(bathrooms: int) -> str | None:
+    if not (1 <= bathrooms <= MAX_BATHROOMS):
+        return f"bathrooms fuera de rango (1-{MAX_BATHROOMS}): {bathrooms}"
+    return None
+
+
 def validate_inputs(**kwargs) -> list[str]:
-    """Valida un conjunto de inputs. Devuelve lista de errores (vacía = ok)."""
+    """Valida un conjunto de inputs. Devuelve lista de errores (vacía = ok).
+
+    Solo valida los campos presentes y no-None — los desconocidos son
+    aceptables (el modelo les aplica factor neutro)."""
     errors: list[str] = []
     validators = {
         "postal_code": validate_postal_code,
@@ -80,6 +116,10 @@ def validate_inputs(**kwargs) -> list[str]:
         "year_built": validate_year,
         "year": validate_year,
         "condition": validate_condition,
+        "orientation": validate_orientation,
+        "floor": validate_floor,
+        "bedrooms": validate_bedrooms,
+        "bathrooms": validate_bathrooms,
     }
     for key, val in kwargs.items():
         if key in validators and val is not None:

@@ -2,6 +2,339 @@
   "overall": 100,
   "results": [
     {
+      "id": "hedonic-v2-sanity",
+      "desc": "ordenaciones del modelo hedónico v2 (offline)",
+      "checks": [
+        [
+          "elevator_tristate_order",
+          true,
+          "sin=221400 desconocido=270000 con=283500"
+        ],
+        [
+          "elevator_unknown_neutral",
+          true,
+          "floor=5 sin dato de ascensor → factor 1.0"
+        ],
+        [
+          "orientation_north_south",
+          true,
+          "norte < sin orientación < sur"
+        ],
+        [
+          "interior_penalizes",
+          true,
+          "interior (aun con sur) < exterior"
+        ],
+        [
+          "second_bathroom_premium",
+          true,
+          "2 baños > 1 baño (90 m²)"
+        ],
+        [
+          "single_bath_large_flat_penalty",
+          true,
+          "120 m² con 1 baño < 120 m² sin dato"
+        ],
+        [
+          "overdivision_penalty",
+          true,
+          "90 m² / 6 hab (15 m²/hab) < 90 m² / 3 hab"
+        ],
+        [
+          "extras_premium",
+          true,
+          "terraza+garaje > sin extras"
+        ],
+        [
+          "model_v2_8_factors",
+          true,
+          "model=hedonic_v2 factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
+        ],
+        [
+          "unknown_inputs_reported",
+          true,
+          "unknown=['condition', 'year_built', 'floor', 'has_elevator', 'energy_rating', 'orientation', 'bedrooms', 'bathrooms']"
+        ]
+      ],
+      "passed": 10,
+      "total": 10,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {
+        "factors_90m2_neutro": {
+          "surface": 1.0,
+          "condition": 1.0,
+          "antiquity": 1.0,
+          "floor_elevator": 1.0,
+          "energy": 1.0,
+          "orientation": 1.0,
+          "distribution": 1.0,
+          "extras": 1.0
+        }
+      }
+    },
+    {
+      "id": "parser/idealista-tipico",
+      "desc": "parser de características (offline)",
+      "checks": [
+        [
+          "parse_surface_m2",
+          true,
+          "got=90.0 exp=90.0"
+        ],
+        [
+          "parse_bedrooms",
+          true,
+          "got=3 exp=3"
+        ],
+        [
+          "parse_bathrooms",
+          true,
+          "got=2 exp=2"
+        ],
+        [
+          "parse_has_terrace",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_has_garage",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_has_storage_room",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_condition",
+          true,
+          "got='buen_estado' exp='buen_estado'"
+        ],
+        [
+          "parse_orientation",
+          true,
+          "got='sur' exp='sur'"
+        ],
+        [
+          "parse_year_built",
+          true,
+          "got=1995 exp=1995"
+        ],
+        [
+          "parse_floor",
+          true,
+          "got=4 exp=4"
+        ],
+        [
+          "parse_exterior",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_has_elevator",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_energy_rating",
+          true,
+          "got='E' exp='E'"
+        ]
+      ],
+      "passed": 13,
+      "total": 13,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {
+        "fields": {
+          "surface_m2": 90.0,
+          "bedrooms": 3,
+          "bathrooms": 2,
+          "has_terrace": true,
+          "has_garage": true,
+          "condition": "buen_estado",
+          "orientation": "sur",
+          "year_built": 1995,
+          "has_storage_room": true,
+          "floor": 4,
+          "has_elevator": true,
+          "exterior": true,
+          "energy_rating": "E"
+        },
+        "unmatched": [
+          "Armarios empotrados"
+        ]
+      }
+    },
+    {
+      "id": "parser/sin-ascensor-interior",
+      "desc": "parser de características (offline)",
+      "checks": [
+        [
+          "parse_surface_m2",
+          true,
+          "got=65.0 exp=65.0"
+        ],
+        [
+          "parse_bedrooms",
+          true,
+          "got=2 exp=2"
+        ],
+        [
+          "parse_bathrooms",
+          true,
+          "got=1 exp=1"
+        ],
+        [
+          "parse_condition",
+          true,
+          "got='a_reformar' exp='a_reformar'"
+        ],
+        [
+          "parse_floor",
+          true,
+          "got=3 exp=3"
+        ],
+        [
+          "parse_exterior",
+          true,
+          "got=False exp=False"
+        ],
+        [
+          "parse_has_elevator",
+          true,
+          "got=False exp=False"
+        ],
+        [
+          "parse_orientation",
+          true,
+          "got='norte' exp='norte'"
+        ]
+      ],
+      "passed": 8,
+      "total": 8,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {
+        "fields": {
+          "surface_m2": 65.0,
+          "bedrooms": 2,
+          "bathrooms": 1,
+          "condition": "a_reformar",
+          "floor": 3,
+          "has_elevator": false,
+          "exterior": false,
+          "orientation": "norte"
+        },
+        "unmatched": []
+      }
+    },
+    {
+      "id": "parser/atico-obra-nueva-combinada",
+      "desc": "parser de características (offline)",
+      "checks": [
+        [
+          "parse_is_attic",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_condition",
+          true,
+          "got='obra_nueva' exp='obra_nueva'"
+        ],
+        [
+          "parse_has_pool",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_orientation",
+          true,
+          "got='suroeste' exp='suroeste'"
+        ],
+        [
+          "parse_has_elevator",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_bedrooms",
+          true,
+          "got=4 exp=4"
+        ],
+        [
+          "parse_bathrooms",
+          true,
+          "got=2 exp=2"
+        ]
+      ],
+      "passed": 7,
+      "total": 7,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {
+        "fields": {
+          "surface_m2": 120.0,
+          "bedrooms": 4,
+          "bathrooms": 2,
+          "is_attic": true,
+          "condition": "obra_nueva",
+          "has_pool": true,
+          "orientation": "suroeste",
+          "has_elevator": true
+        },
+        "unmatched": []
+      }
+    },
+    {
+      "id": "parser/bajo-garaje-opcional",
+      "desc": "parser de características (offline)",
+      "checks": [
+        [
+          "parse_floor",
+          true,
+          "got=0 exp=0"
+        ],
+        [
+          "parse_exterior",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_has_elevator",
+          true,
+          "got=True exp=True"
+        ],
+        [
+          "parse_has_garage",
+          true,
+          "got=False exp=False"
+        ],
+        [
+          "parse_energy_rating",
+          true,
+          "got='D' exp='D'"
+        ]
+      ],
+      "passed": 5,
+      "total": 5,
+      "score": 100,
+      "elapsed_s": 0.0,
+      "snapshot": {
+        "fields": {
+          "floor": 0,
+          "has_elevator": true,
+          "exterior": true,
+          "has_garage": false,
+          "energy_rating": "D"
+        },
+        "unmatched": []
+      }
+    },
+    {
       "id": "madrid-centro",
       "desc": "Madrid Centro — zona prime, edificio antiguo",
       "checks": [
@@ -43,7 +376,7 @@
         [
           "hedonic_factors_present",
           true,
-          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
         ],
         [
           "triangulation_available",
@@ -64,7 +397,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 5.0,
+      "elapsed_s": 6.1,
       "snapshot": {
         "year_built": 1914,
         "notariado_price": 5919.4,
@@ -95,22 +428,22 @@
         [
           "notariado_level_ok",
           true,
-          "level=codigo_postal exp=['codigo_postal', 'municipio']"
+          "level=municipio exp=['codigo_postal', 'municipio']"
         ],
         [
           "notariado_price_in_range",
           true,
-          "price=5407.2 exp=[2500, 6000]"
+          "price=4570.9 exp=[2500, 6000]"
         ],
         [
           "notariado_min_transactions",
           true,
-          "tx=682 min=30"
+          "tx=4048 min=30"
         ],
         [
           "current_value_in_range",
           true,
-          "value=594800 exp=[300000, 800000]"
+          "value=502800 exp=[300000, 800000]"
         ],
         [
           "catastro_official_or_graceful",
@@ -120,12 +453,12 @@
         [
           "hedonic_factors_present",
           true,
-          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
         ],
         [
           "triangulation_available",
           true,
-          "convergence=66%"
+          "convergence=78%"
         ],
         [
           "roi_recommendation_valid",
@@ -141,17 +474,17 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 2.3,
+      "elapsed_s": 18.3,
       "snapshot": {
         "year_built": null,
-        "notariado_price": 5407.2,
-        "notariado_level": "codigo_postal",
-        "notariado_tx": 682,
+        "notariado_price": 4570.9,
+        "notariado_level": "municipio",
+        "notariado_tx": 4048,
         "mitma_price": 3571,
-        "convergence_pct": 66,
-        "current_value": 594800,
+        "convergence_pct": 78,
+        "current_value": 502800,
         "reno_total": 20741.0,
-        "post_value": 594800,
+        "post_value": 502800,
         "roi_recommendation": "no_recomendado"
       }
     },
@@ -197,7 +530,7 @@
         [
           "hedonic_factors_present",
           true,
-          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
         ],
         [
           "triangulation_available",
@@ -218,7 +551,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 4.1,
+      "elapsed_s": 4.9,
       "snapshot": {
         "year_built": 1905,
         "notariado_price": 2912.5,
@@ -274,7 +607,7 @@
         [
           "hedonic_factors_present",
           true,
-          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
         ],
         [
           "triangulation_available",
@@ -295,7 +628,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 1.9,
+      "elapsed_s": 2.1,
       "snapshot": {
         "year_built": null,
         "notariado_price": 4644.5,
@@ -351,7 +684,7 @@
         [
           "hedonic_factors_present",
           true,
-          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation']"
+          "factors=['surface', 'condition', 'antiquity', 'floor_elevator', 'energy', 'orientation', 'distribution', 'extras']"
         ],
         [
           "triangulation_available",
@@ -372,7 +705,7 @@
       "passed": 11,
       "total": 11,
       "score": 100,
-      "elapsed_s": 3.4,
+      "elapsed_s": 3.7,
       "snapshot": {
         "year_built": 1915,
         "notariado_price": 2706.4,

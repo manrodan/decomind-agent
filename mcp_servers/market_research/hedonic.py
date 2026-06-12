@@ -1,5 +1,5 @@
 """
-Modelo hedónico de valoración inmobiliaria.
+Modelo hedónico de valoración inmobiliaria (v2).
 
 Un AVM (Automated Valuation Model) profesional no aplica un multiplicador
 plano por estado — ajusta el €/m² base de la zona por las características del
@@ -10,6 +10,14 @@ Cada factor devuelve un MULTIPLICADOR sobre el €/m² base. El valor final es:
 
     €/m²_final = €/m²_zona × Π(factores aplicables)
     valor = €/m²_final × superficie
+
+v2 añade sobre v1:
+  - Distribución: nº de baños y densidad m²/habitación (el 2º baño es de los
+    predictores más fuertes tras superficie y ubicación).
+  - Orientación real (N/S/E/O y combinadas), no solo exterior/interior.
+  - Extras: terraza, garaje incluido, trastero, piscina/zonas comunes.
+  - Tri-estado honesto: ascensor y exterior desconocidos aplican factor NEUTRO
+    (v1 asumía optimistamente ascensor=sí y exterior=sí si no se indicaban).
 
 Limitación honesta: los coeficientes son heurísticas de dominio (lo que aplica
 un tasador con experiencia), no calibrados con regresión sobre transacciones
@@ -41,6 +49,7 @@ def surface_factor(surface_m2: float) -> float:
 # ── 2. Planta + ascensor ───────────────────────────────────────────────────
 # El factor más infravalorado en valoraciones de juguete. En España, un 3º sin
 # ascensor pierde mucho valor; un ático o planta alta CON ascensor gana.
+# has_elevator=None (desconocido) NO aplica premium ni castigo: neutro.
 def floor_elevator_factor(floor: int | None, has_elevator: bool | None,
                           is_attic: bool = False) -> float:
     if is_attic:
@@ -55,10 +64,9 @@ def floor_elevator_factor(floor: int | None, has_elevator: bool | None,
         if floor == 3:
             return 0.90
         return 0.82  # 4º+ sin ascensor: penalización fuerte
-    # con ascensor (o desconocido tratado como con ascensor en urbano)
-    if floor >= 4:
+    if has_elevator is True and floor >= 4:
         return 1.05  # plantas altas con ascensor: luz, vistas, menos ruido
-    return 1.00
+    return 1.00  # ascensor desconocido o plantas 1-3 con ascensor: neutro
 
 
 # ── 3. Eficiencia energética ───────────────────────────────────────────────
@@ -93,11 +101,22 @@ def condition_factor(condition: str | None) -> float:
     return CONDITION_FACTOR.get(condition.strip().lower(), 1.0)
 
 
-# ── 5. Exterior / interior ─────────────────────────────────────────────────
-def orientation_factor(exterior: bool | None) -> float:
-    if exterior is None:
-        return 1.0
-    return 1.00 if exterior else 0.90  # interior: menos luz → menos demanda
+# ── 5. Orientación + exterior/interior ─────────────────────────────────────
+# En España el sur manda (luz y demanda); el norte penaliza. Interior pierde
+# siempre (la penalización de luz domina sobre la orientación, que se ignora).
+ORIENTATION_FACTOR: dict[str, float] = {
+    "sur": 1.03, "sureste": 1.02, "suroeste": 1.02,
+    "este": 1.00, "oeste": 1.00,
+    "noreste": 0.98, "noroeste": 0.98, "norte": 0.97,
+}
+
+
+def orientation_factor(exterior: bool | None, orientation: str | None = None) -> float:
+    if exterior is False:
+        return 0.90  # interior: menos luz → menos demanda (orientación irrelevante)
+    if orientation:
+        return ORIENTATION_FACTOR.get(orientation.strip().lower(), 1.0)
+    return 1.0  # exterior sin orientación conocida, o todo desconocido: neutro
 
 
 # ── 6. Antigüedad (curva fina) ─────────────────────────────────────────────
@@ -118,6 +137,41 @@ def antiquity_factor(year_built: int | None) -> float:
     return 0.84  # edificios centenarios (salvo rehab integral)
 
 
+# ── 7. Distribución: baños y densidad de habitaciones ──────────────────────
+# El 2º baño es de los predictores más fuertes tras superficie y ubicación.
+# Un único baño en un piso grande penaliza; demasiadas habitaciones para los
+# m² (sobredivisión, habitaciones enanas) también.
+def distribution_factor(surface_m2: float, bedrooms: int | None,
+                        bathrooms: int | None) -> float:
+    f = 1.0
+    if bathrooms and surface_m2 > 0:
+        if bathrooms >= 2 and surface_m2 >= 80:
+            f *= 1.03
+        elif bathrooms == 1 and surface_m2 >= 110:
+            f *= 0.96
+    if bedrooms and surface_m2 > 0:
+        if surface_m2 / bedrooms < 16:  # sobredivisión: habitaciones enanas
+            f *= 0.95
+    return f
+
+
+# ── 8. Extras: terraza, garaje, trastero, piscina ──────────────────────────
+# Solo premian si constan (True); ausentes o desconocidos = neutro, que es el
+# default conservador correcto.
+def extras_factor(has_terrace: bool = False, has_garage: bool = False,
+                  has_storage_room: bool = False, has_pool: bool = False) -> float:
+    f = 1.0
+    if has_terrace:
+        f *= 1.04
+    if has_garage:
+        f *= 1.05  # plaza incluida en el precio
+    if has_storage_room:
+        f *= 1.01
+    if has_pool:
+        f *= 1.02  # piscina / zonas comunes
+    return f
+
+
 def value_breakdown(
     surface_m2: float,
     base_eur_per_m2: float,
@@ -128,11 +182,19 @@ def value_breakdown(
     is_attic: bool = False,
     energy_rating: str | None = None,
     exterior: bool | None = None,
+    orientation: str | None = None,
+    bedrooms: int | None = None,
+    bathrooms: int | None = None,
+    has_terrace: bool = False,
+    has_garage: bool = False,
+    has_storage_room: bool = False,
+    has_pool: bool = False,
 ) -> dict[str, Any]:
     """Aplica el modelo hedónico y devuelve valor + desglose auditable.
 
     Returns dict con cada factor por separado (transparencia total) + el
-    €/m² ajustado y el valor final.
+    €/m² ajustado, el valor final y la lista de campos desconocidos a los
+    que se aplicó factor neutro (`unknown_inputs`).
     """
     factors = {
         "surface": round(surface_factor(surface_m2), 4),
@@ -140,7 +202,10 @@ def value_breakdown(
         "antiquity": round(antiquity_factor(year_built), 4),
         "floor_elevator": round(floor_elevator_factor(floor, has_elevator, is_attic), 4),
         "energy": round(energy_factor(energy_rating), 4),
-        "orientation": round(orientation_factor(exterior), 4),
+        "orientation": round(orientation_factor(exterior, orientation), 4),
+        "distribution": round(distribution_factor(surface_m2, bedrooms, bathrooms), 4),
+        "extras": round(extras_factor(has_terrace, has_garage,
+                                      has_storage_room, has_pool), 4),
     }
 
     combined = 1.0
@@ -150,11 +215,25 @@ def value_breakdown(
     adjusted_eur_m2 = base_eur_per_m2 * combined
     value = round(adjusted_eur_m2 * surface_m2 / 100) * 100  # redondeo a 100€
 
+    # Transparencia: campos sin dato → factor neutro (el consumidor decide si
+    # pedirlos al usuario o mostrarlos como "no considerado").
+    unknown_inputs = [name for name, missing in {
+        "condition": not condition,
+        "year_built": not year_built,
+        "floor": floor is None and not is_attic,
+        "has_elevator": has_elevator is None and not is_attic,
+        "energy_rating": not energy_rating,
+        "orientation": exterior is None and not orientation,
+        "bedrooms": not bedrooms,
+        "bathrooms": not bathrooms,
+    }.items() if missing]
+
     return {
         "value_eur": value,
         "value_eur_per_m2": round(adjusted_eur_m2),
         "base_eur_per_m2": round(base_eur_per_m2),
         "combined_factor": round(combined, 4),
         "factors": factors,
-        "model": "hedonic_v1",
+        "unknown_inputs": unknown_inputs,
+        "model": "hedonic_v2",
     }
