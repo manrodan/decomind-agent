@@ -111,16 +111,22 @@ def _geocode_with_fallback(
 
 def _same_province(a: str, b: str) -> bool | None:
     """¿Son la misma provincia? Tolera variantes ("La Coruña"/"A Coruña",
-    "Castellón"/"Castelló"). None si algún nombre falta o no se reconoce."""
+    "Castellón"/"Castelló"). None si algún nombre falta o NO SE RECONOCE —
+    los geocoders a veces devuelven la CCAA ("Comunidad de Madrid") o la
+    comarca, y ante eso no se afirma discrepancia."""
     na, nb = _norm_province(a), _norm_province(b)
     if not na or not nb:
         return None
     if na == nb:
         return True
+    known_a = known_b = False
     for aliases in PROVINCE_ALIASES_BY_CP_PREFIX.values():
-        if na in aliases:
-            return nb in aliases
-    return None
+        in_a, in_b = na in aliases, nb in aliases
+        if in_a and in_b:
+            return True
+        known_a = known_a or in_a
+        known_b = known_b or in_b
+    return False if (known_a and known_b) else None
 
 
 def resolve_location(

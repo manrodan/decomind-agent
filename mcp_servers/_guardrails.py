@@ -49,7 +49,8 @@ PROVINCE_ALIASES_BY_CP_PREFIX: dict[str, set[str]] = {
     "17": {"girona", "gerona"}, "18": {"granada"}, "19": {"guadalajara"},
     "20": {"guipuzcoa", "gipuzkoa"}, "21": {"huelva"}, "22": {"huesca"},
     "23": {"jaen"}, "24": {"leon"}, "25": {"lleida", "lerida"},
-    "26": {"la rioja"}, "27": {"lugo"}, "28": {"madrid"}, "29": {"malaga"},
+    "26": {"la rioja"}, "27": {"lugo"},
+    "28": {"madrid", "comunidad de madrid"}, "29": {"malaga"},
     "30": {"murcia", "region de murcia"},
     "31": {"navarra", "nafarroa", "comunidad foral de navarra"},
     "32": {"ourense", "orense"},
@@ -73,7 +74,12 @@ def _norm_province(name: str) -> str:
 
 def cp_matches_province(cp: str, province: str) -> bool | None:
     """¿El CP corresponde a la provincia? True/False, o None si no se puede
-    determinar (CP inválido, provincia vacía o nombre no reconocido)."""
+    determinar (CP inválido, provincia vacía o nombre NO RECONOCIDO).
+
+    El None del nombre no reconocido es crítico: los geocoders devuelven a
+    veces la CCAA ("Comunidad de Madrid") o la comarca ("Barcelonès") en el
+    campo provincia — ante un nombre desconocido NO se afirma incoherencia
+    (un False erróneo descartaría un CP válido)."""
     cp = (cp or "").strip()
     if not (cp.isdigit() and len(cp) == 5):
         return None
@@ -81,7 +87,10 @@ def cp_matches_province(cp: str, province: str) -> bool | None:
     prov = _norm_province(province)
     if not aliases or not prov:
         return None
-    return prov in aliases
+    if prov in aliases:
+        return True
+    known = any(prov in s for s in PROVINCE_ALIASES_BY_CP_PREFIX.values())
+    return False if known else None
 
 MAX_FLOOR = 60
 MAX_BEDROOMS = 20
