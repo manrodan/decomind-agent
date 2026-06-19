@@ -165,6 +165,39 @@ def _tri(value: bool | None) -> int:
     return -1 if value is None else int(bool(value))
 
 
+_BASE_DISPERSION = 0.08  # dispersión intra-zona (un inmueble vs la media de su segmento)
+
+
+def confidence_band(
+    center_m2: float | None, surface_m2: float,
+    nota_price: float | None, mitma_price: float | None,
+    base: float = _BASE_DISPERSION,
+) -> tuple[dict[str, Any] | None, float | None]:
+    """Banda de confianza SIMÉTRICA sobre el valor recomendado.
+
+    Ancho = dispersión base + medio gap inter-fuente (Notariado vs MITMA): si las
+    dos fuentes oficiales convergen, la banda se estrecha; si divergen, se
+    ensancha. Una sola fuente → algo más ancha (sin triangulación). El central
+    SIEMPRE cae dentro (la banda es simétrica sobre él). Devuelve (interval, half)
+    o (None, None) si faltan datos para construirla.
+    """
+    if not (center_m2 and surface_m2):
+        return None, None
+    half = base
+    if nota_price and mitma_price:
+        half += abs(nota_price - mitma_price) / max(nota_price, mitma_price) / 2
+    else:
+        half += 0.06
+    half = min(half, 0.25)   # techo: nunca una banda absurda
+    interval = {
+        "low_eur": round(center_m2 * (1 - half) * surface_m2 / 100) * 100,
+        "high_eur": round(center_m2 * (1 + half) * surface_m2 / 100) * 100,
+        "low_eur_per_m2": round(center_m2 * (1 - half)),
+        "high_eur_per_m2": round(center_m2 * (1 + half)),
+    }
+    return interval, half
+
+
 def run_valuation(
     address: str,
     locality: str = "",
@@ -172,6 +205,7 @@ def run_valuation(
     postal_code: str = "",
     surface_m2: float = 0,
     condition: str = "",
+    property_type: str = "",
     year_built: int = 0,
     floor: int | None = None,
     has_elevator: bool | None = None,
@@ -200,6 +234,10 @@ def run_valuation(
         condition: estado (a_reformar/buen_estado/reformado/obra_nueva/ruina).
             "" = desconocido: se toma de `features` o, en último caso,
             'buen_estado' (y se declara como asumido).
+        property_type: piso/atico/casa/chalet/adosado/pareado/unifamiliar.
+            "" = no segmentar (Notariado agregado, comportamiento histórico).
+            Si llega, el Notariado consulta inmuebles SIMILARES (pisos vs
+            unifamiliares; obra nueva vs usada según `condition`).
         year_built: año (0 = usar el oficial del Catastro si está).
         floor / has_elevator / is_attic / energy_rating / exterior / orientation
             / bedrooms / bathrooms / has_terrace / has_garage / has_storage_room
@@ -301,8 +339,18 @@ def run_valuation(
     official_year = cat.get("year_built")
     year = official_year or year_built or 0
 
-    # 3. Notariado (precio REAL de transacción por CP, fuente primaria)
-    nota = notariado_price(postal_code=cp, municipality=muni, province=prov)
+    # 3. Notariado (precio REAL de transacción por CP, fuente primaria).
+    # Segmento del inmueble para pedir el precio de SIMILARES (no el agregado de
+    # todas las viviendas). OPT-IN: sin property_type → sin segmento → mismo
+    # comportamiento histórico (importante: el Dossier ROI no pasa tipo).
+    _UNIFAM = {"casa", "chalet", "adosado", "pareado", "unifamiliar"}
+    if property_type:
+        property_class = "unifamiliar" if property_type.lower() in _UNIFAM else "piso"
+        construction = "nueva" if condition == "obra_nueva" else "usada"
+    else:
+        property_class = construction = ""
+    nota = notariado_price(postal_code=cp, municipality=muni, province=prov,
+                           property_class=property_class, construction=construction)
     nota_price = nota.get("price_eur_per_m2") if nota.get("found") else None
 
     # 4. MITMA (find_comparables -> mediana tasada, 2ª fuente)
@@ -350,8 +398,40 @@ def run_valuation(
     if condition_assumed and "condition" not in assumed:
         assumed.append("condition")
 
+    # 6b. Banda de confianza centrada en el valor recomendado; el ancho refleja
+    # la incertidumbre real (dispersión intra-zona + desacuerdo entre fuentes).
+    # ponytail: dispersión base 8% es heurística residencial; upgrade a desviación
+    # típica real cuando haya comparables individuales (Idealista Data).
+    interval, band_half = confidence_band(
+        val.get("value_eur_per_m2"), surface_m2, nota_price, mitma_price)
+    if interval is not None:
+        # ponytail: el central siempre cae dentro (banda simétrica sobre el valor)
+        assert interval["low_eur"] <= current_value <= interval["high_eur"], \
+            (interval, current_value)
+
     # 7. Triangulación de fuentes (convergencia + flag revisión)
     agreement = check_source_agreement(nota_price or 0, mitma_price or 0)
+
+    # 7b. Confianza de la valoración: un único veredicto (Alta/Media/Baja), no
+    # campos crudos sueltos. El frontend lo muestra como sello junto al precio.
+    _LV = {"high": "alta", "moderate": "media", "low": "baja", "single_source": "media"}
+    conf_level = _LV.get(agreement.get("agreement"), "media")
+    # Baja un peldaño si la base es menos fiable: sin dirección exacta (sin
+    # Catastro), Notariado estimado, o cayó al agregado pese a pedir segmento.
+    if precision != "street" or nota.get("is_estimated") or nota.get("segment_fallback"):
+        conf_level = {"alta": "media", "media": "baja", "baja": "baja"}[conf_level]
+    confidence = {
+        "level": conf_level,
+        "label": {"alta": "Alta", "media": "Media", "baja": "Baja"}[conf_level],
+        "band_pct": round(band_half * 100) if band_half is not None else None,
+        "reason": agreement.get("note") or "",
+        # Base de comparables: "comparado con N pisos de 2ª mano en CP 28013".
+        "comps_basis": {
+            "n": nota.get("num_transactions"),
+            "segment": nota.get("segment"),
+            "level": nota.get("level"),
+        } if nota.get("found") else None,
+    }
 
     warnings = pre_warnings + list(val.get("warnings", []))
     if precision == "locality":
@@ -376,6 +456,8 @@ def run_valuation(
         },
         "valuation": {
             "current_value_eur": current_value,
+            "interval": interval,
+            "confidence": confidence,
             "value_eur_per_m2": val.get("value_eur_per_m2"),
             "base_eur_per_m2": val.get("base_eur_per_m2"),
             "combined_factor": val.get("combined_factor"),
@@ -410,6 +492,8 @@ def run_valuation(
                 "num_transactions": nota.get("num_transactions"),
                 "level": nota.get("level"),
                 "is_estimated": nota.get("is_estimated"),
+                "segment": nota.get("segment"),
+                "segment_fallback": nota.get("segment_fallback"),
             } if nota.get("found") else None,
             "mitma": {
                 "price_eur_per_m2": mitma_price,

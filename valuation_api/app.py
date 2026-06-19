@@ -62,6 +62,9 @@ class ValuationRequest(BaseModel):
     # "" = desconocido: se toma de `features` o se asume 'buen_estado'
     # (y queda declarado en valuation.assumed_neutral_fields).
     condition: str = ""
+    # "" = no segmentar (Notariado agregado). piso/atico/casa/chalet/adosado/
+    # pareado/unifamiliar → Notariado de inmuebles similares.
+    property_type: str = ""
     year_built: int = 0
     # None / -1 / "" / 0 = desconocido → factor hedónico neutro, nunca se
     # asume optimistamente (v1 asumía ascensor=sí y exterior=sí).
@@ -130,6 +133,7 @@ async def valuate(
             postal_code=req.postal_code,
             surface_m2=req.surface_m2,
             condition=req.condition,
+            property_type=req.property_type,
             year_built=req.year_built,
             floor=req.floor,
             has_elevator=req.has_elevator,

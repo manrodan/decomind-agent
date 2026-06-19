@@ -102,6 +102,45 @@ def main() -> None:
     except Exception as exc:
         print(f"ERROR: {exc}")
 
+    # 4c) DOMINIOS (id → etiqueta) de los dos campos de segmento
+    section("4c) Coded value domains de tipo_construccion_id / clase_finca_urbana_id")
+    for layer in (3, 4):
+        try:
+            meta = get_json(f"{BASE}/{layer}", {"f": "json"})
+            print(f"  -- capa {layer} --")
+            for fld in meta.get("fields", []):
+                if fld.get("name") not in ("tipo_construccion_id", "clase_finca_urbana_id"):
+                    continue
+                dom = fld.get("domain")
+                if dom and dom.get("codedValues"):
+                    print(f"  {fld['name']}:")
+                    for cv in dom["codedValues"]:
+                        print(f"    {str(cv.get('code')):>6} = {cv.get('name')}")
+                else:
+                    print(f"  {fld['name']}: sin domain (dom={dom})")
+        except Exception as exc:
+            print(f"ERROR capa {layer}: {exc}")
+
+    # 4d) total por segmento en un CP conocido (28013): qué ids tienen datos
+    section("4d) Segmentos con datos en CP 28013 (capa 4): ids + total")
+    try:
+        q = get_json(f"{BASE}/4/query", {
+            "f": "json",
+            "where": "cp='28013'",
+            "outFields": "tipo_construccion_id,clase_finca_urbana_id,precio_m2,total",
+            "returnGeometry": "false",
+            "resultRecordCount": 100,
+        })
+        rows = [ft.get("attributes", {}) for ft in q.get("features", [])]
+        rows.sort(key=lambda r: -(r.get("total") or 0))
+        for r in rows:
+            t = str(r.get("tipo_construccion_id"))
+            c = str(r.get("clase_finca_urbana_id"))
+            print(f"  tipo={t:>3} clase={c:>3}  precio_m2={str(r.get('precio_m2')):>8}"
+                  f"  total={r.get('total')}")
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+
     # 5) query Madrid municipio con total (99,99) para ver el agregado
     section("5) Madrid municipio — agregado total (tipo=99, clase=99)")
     try:
