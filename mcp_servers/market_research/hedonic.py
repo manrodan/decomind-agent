@@ -33,12 +33,18 @@ from typing import Any
 # Pisos pequeños tienen mayor €/m² (más demanda, escasez); pisos muy grandes
 # menor €/m² (menos compradores, "descuento por tamaño").
 def surface_factor(surface_m2: float) -> float:
+    # ponytail: escalones más finos en el tramo pequeño; el €/m² base del
+    # Notariado refleja la superficie media de la zona (~90 m²), así que un
+    # piso de 50 m² merece prima real, no la casi-neutra de antes (1.03).
+    # Upgrade: curva continua calibrada por regresión cuando haya microdatos.
     if surface_m2 <= 0:
         return 1.0
-    if surface_m2 < 50:
-        return 1.08
+    if surface_m2 < 40:
+        return 1.15
+    if surface_m2 < 55:
+        return 1.10
     if surface_m2 < 80:
-        return 1.03
+        return 1.04
     if surface_m2 < 120:
         return 1.00  # banda de referencia
     if surface_m2 < 180:
