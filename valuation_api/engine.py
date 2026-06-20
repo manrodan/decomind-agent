@@ -36,6 +36,7 @@ from mcp_servers.market_research.server import (
 )
 from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.renovation.server import estimate_renovation_plan
+from mcp_servers.zona_valor.server import zona_valor_gradient
 from mcp_servers._guardrails import (
     PROVINCE_ALIASES_BY_CP_PREFIX,
     _norm_province,
@@ -398,12 +399,40 @@ def run_valuation(
     if condition_assumed and "condition" not in assumed:
         assumed.append("condition")
 
-    # 6b. Banda de confianza centrada en el valor recomendado; el ancho refleja
-    # la incertidumbre real (dispersión intra-zona + desacuerdo entre fuentes).
+    # 6a. Ajuste FINO de ubicación dentro del CP (zona de valor del Catastro).
+    # El Notariado solo baja a CP: dentro del CP todas las calles cobran igual.
+    # Gradiente relativo acotado (±12%) que inclina el valor hacia la posición de
+    # la calle en su entorno inmediato. Solo con dirección exacta (a nivel zona el
+    # punto es el centroide del municipio y el anillo no tiene sentido). NO toca
+    # `base_eur_per_m2` (el Dossier ROI lo lee y debe seguir siendo el €/m² de
+    # zona) → aislamiento por construcción. No-op donde no hay cobertura.
+    value_per_m2 = val.get("value_eur_per_m2")
+    location_adjustment: dict[str, Any] = {"applied": False}
+    if precision == "street" and lat and lon and value_per_m2:
+        try:
+            grad = zona_valor_gradient(lat=lat, lon=lon)
+        except Exception:
+            grad = {"found": False, "gradient": 1.0}
+        g = grad.get("gradient") or 1.0
+        if grad.get("found") and g != 1.0:
+            value_per_m2 = round(value_per_m2 * g)
+            current_value = round(current_value * g)
+            location_adjustment = {
+                "applied": True,
+                "gradient": g,
+                "pct": round((g - 1) * 100, 1),
+                "zone_code": grad.get("zone_code"),
+                "neighborhood_mean_eur_m2": grad.get("neighborhood_mean"),
+                "source": "catastro_zona_valor",
+            }
+
+    # 6b. Banda de confianza centrada en el valor recomendado (ya con el ajuste de
+    # ubicación); el ancho refleja la incertidumbre real (dispersión intra-zona +
+    # desacuerdo entre fuentes).
     # ponytail: dispersión base 8% es heurística residencial; upgrade a desviación
     # típica real cuando haya comparables individuales (Idealista Data).
     interval, band_half = confidence_band(
-        val.get("value_eur_per_m2"), surface_m2, nota_price, mitma_price)
+        value_per_m2, surface_m2, nota_price, mitma_price)
     if interval is not None:
         # ponytail: el central siempre cae dentro (banda simétrica sobre el valor)
         assert interval["low_eur"] <= current_value <= interval["high_eur"], \
@@ -458,7 +487,8 @@ def run_valuation(
             "current_value_eur": current_value,
             "interval": interval,
             "confidence": confidence,
-            "value_eur_per_m2": val.get("value_eur_per_m2"),
+            "location_adjustment": location_adjustment,
+            "value_eur_per_m2": value_per_m2,
             "base_eur_per_m2": val.get("base_eur_per_m2"),
             "combined_factor": val.get("combined_factor"),
             "hedonic_factors": val.get("factors"),

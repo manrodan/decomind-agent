@@ -16,6 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from valuation_api.engine import confidence_band  # noqa: E402
 from mcp_servers.notariado.server import _CLASE_CODES, _TIPO_CODES  # noqa: E402
+from mcp_servers.zona_valor.server import (  # noqa: E402
+    _clamp_gradient, _parse_gfi, _PONENCIA_CACHE,
+)
 
 
 def test_central_siempre_dentro():
@@ -51,6 +54,28 @@ def test_codigos_de_segmento_confirmados():
     # Confirmados contra el FeatureServer vivo (probe_notariado.py 4c/4d).
     assert _CLASE_CODES == {"piso": 14, "unifamiliar": 15}
     assert _TIPO_CODES == {"nueva": 7, "usada": 9}
+
+
+def test_gradiente_zona_acotado_y_noop():
+    # Ajuste fino acotado a ±12%; entorno uniforme y media 0 → no-op (1.0).
+    assert abs(_clamp_gradient(2440, 1958) - 1.12) < 1e-9   # +25% bruto → tope +12%
+    assert abs(_clamp_gradient(500, 2000) - 0.88) < 1e-9    # -75% bruto → suelo -12%
+    assert _clamp_gradient(2000, 2000) == 1.0               # entorno uniforme
+    assert _clamp_gradient(2440, 0) == 1.0                  # media 0 → guard
+
+
+def test_parse_gfi_zona_valor():
+    # Parser del GetFeatureInfo sin red (sembramos la caché de ponencia).
+    _PONENCIA_CACHE[("28", "900")] = {"R10E": 2440.0}
+    z = _parse_gfi('<td>Municipio</td><td>Codigo</td><td>MADRID</td><td>R10E</td>'
+                   ' window.open("ponencia.aspx?del=28&mun=900")')
+    assert z == {"found": True, "code": "R10E", "value": 2440.0,
+                 "del": "28", "mun": "900"}, z
+
+
+def test_parse_gfi_sin_cobertura():
+    # mun=0 = el WMS no encontró zona en ese punto → no-op.
+    assert _parse_gfi('<td>Municipio</td> ponencia.aspx?del=41&mun=0') == {"found": False}
 
 
 if __name__ == "__main__":
