@@ -38,9 +38,12 @@ from typing import Any
 # Notariado (`superficie_media`, p.ej. 94 m² en CP 12006). Un piso de 50 m² en
 # esa zona cotiza muy por encima de esa mediana (caso real: vendido a 2.160
 # €/m² vs mediana 1.268): €/m² ≈ mediana × (media_zona/superficie)^alpha.
-# ponytail: alpha 0.30 es el punto de partida de literatura (elasticidad
-# tamaño→€/m² ~ -0.2/-0.35); calibrar con idealista18/cierres reales.
-_SURFACE_ALPHA = 0.30
+# Calibración de alpha (2026-07-05, dos fuentes agregadas independientes):
+# Fotocasa Castellón may-2026: 1D/estudios 2.567 €/m² vs media 1.977 (+30%)
+# → (94/50)^alpha = 1.30 → alpha ≈ 0.41; idealista18 (Madrid/BCN/VLC): pisos
+# 40-60 m² cotizan +20-40% sobre la media de zona. ponytail: alpha global;
+# el upgrade es por-ciudad con el bucle de cierres reales de los agentes.
+_SURFACE_ALPHA = 0.40
 _SURFACE_REL_MIN, _SURFACE_REL_MAX = 0.80, 1.35
 
 

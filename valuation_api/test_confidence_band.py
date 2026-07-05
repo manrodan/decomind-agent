@@ -67,9 +67,10 @@ def test_gradiente_zona_amortiguado_y_acotado():
 
 
 def test_surface_factor_relativo():
-    # Con superficie media de zona: curva continua (media/superficie)^0.30.
-    from mcp_servers.market_research.hedonic import surface_factor
-    assert abs(surface_factor(50, 94) - (94 / 50) ** 0.30) < 1e-9  # ≈ +21%
+    # Con superficie media de zona: curva continua (media/superficie)^alpha.
+    from mcp_servers.market_research.hedonic import surface_factor, _SURFACE_ALPHA
+    assert abs(surface_factor(50, 94) - (94 / 50) ** _SURFACE_ALPHA) < 1e-9  # ≈ +29%
+    assert surface_factor(50, 94) < 1.35                # bajo el tope (calibrado Fotocasa 1D +30%)
     assert surface_factor(94, 94) == 1.0                # en la media → neutro
     assert surface_factor(20, 200) == 1.35              # tope superior
     assert surface_factor(400, 90) == 0.80              # suelo
