@@ -38,6 +38,12 @@ Write-Host "Copying mcp_servers/ into build context..." -ForegroundColor Yellow
 Copy-Item -Recurse -Force mcp_servers valuation_api\mcp_servers
 Get-ChildItem -Path valuation_api\mcp_servers -Recurse -Include "__pycache__" -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
+# Pre-copia data/*.json (datasets compactos: seccion_signal, stock_age...) —
+# sin data/raw (gigas, gitignored). El engine los resuelve en /app/data.
+if (Test-Path valuation_api\data) { Remove-Item -Recurse -Force valuation_api\data }
+New-Item -ItemType Directory valuation_api\data | Out-Null
+Copy-Item data\*.json valuation_api\data\ -ErrorAction SilentlyContinue
+
 Push-Location valuation_api
 
 $envVars = "GOOGLE_CLOUD_PROJECT=$PROJECT,VALUATION_API_KEY=$ApiKey"
@@ -64,6 +70,7 @@ try {
 } finally {
     Pop-Location
     if (Test-Path valuation_api\mcp_servers) { Remove-Item -Recurse -Force valuation_api\mcp_servers }
+    if (Test-Path valuation_api\data) { Remove-Item -Recurse -Force valuation_api\data }
 }
 
 if ($deployExit -ne 0) {

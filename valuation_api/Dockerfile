@@ -12,6 +12,7 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 COPY mcp_servers ./mcp_servers
+COPY data ./data
 COPY app.py engine.py __init__.py ./
 
 ENV PORT=8080
