@@ -56,12 +56,39 @@ def test_codigos_de_segmento_confirmados():
     assert _TIPO_CODES == {"nueva": 7, "usada": 9}
 
 
-def test_gradiente_zona_acotado_y_noop():
-    # Ajuste fino acotado a ±12%; entorno uniforme y media 0 → no-op (1.0).
-    assert abs(_clamp_gradient(2440, 1958) - 1.12) < 1e-9   # +25% bruto → tope +12%
-    assert abs(_clamp_gradient(500, 2000) - 0.88) < 1e-9    # -75% bruto → suelo -12%
-    assert _clamp_gradient(2000, 2000) == 1.0               # entorno uniforme
-    assert _clamp_gradient(2440, 0) == 1.0                  # media 0 → guard
+def test_gradiente_zona_amortiguado_y_acotado():
+    # Gradiente de mercado = (ratio catastral)**0.5, acotado a ±30%.
+    assert abs(_clamp_gradient(2440, 1958) - (2440 / 1958) ** 0.5) < 1e-9  # +25% bruto → +11.6%
+    assert abs(_clamp_gradient(500, 2000) - 0.70) < 1e-9   # ratio 0.25 → sqrt 0.5 → suelo -30%
+    assert abs(_clamp_gradient(1700, 881) - 1.30) < 1e-9   # Voramar/Benicàssim → tope +30%
+    assert _clamp_gradient(2000, 2000) == 1.0              # ámbito uniforme
+    assert _clamp_gradient(2440, 0) == 1.0                 # baseline 0 → guard
+    assert _clamp_gradient(0, 2000) == 1.0                 # subject 0 → guard
+
+
+def test_fallback_prefiere_residencial():
+    # Caso hotel Voramar: el anillo ve U25 (508) y R17 (1700) → gana la R.
+    from mcp_servers.zona_valor.server import _pick_fallback_zone
+    hits = [{"code": "U25", "value": 508.0}, {"code": "R17", "value": 1700.0}]
+    assert _pick_fallback_zone(hits)["code"] == "R17"
+    # Solo zonas U → se usa la más frecuente / mayor valor de las que haya.
+    hits_u = [{"code": "U25", "value": 508.0}, {"code": "U25", "value": 508.0},
+              {"code": "U23", "value": 590.0}]
+    assert _pick_fallback_zone(hits_u)["code"] == "U25"
+    # Empate de frecuencia entre R → la de mayor valor (determinista).
+    hits_tie = [{"code": "R24", "value": 1140.0}, {"code": "R17", "value": 1700.0}]
+    assert _pick_fallback_zone(hits_tie)["code"] == "R17"
+
+
+def test_ambito_median_solo_residencial():
+    # Baseline = mediana de las zonas R (residencial); U/PU/PR fuera.
+    from mcp_servers.zona_valor.server import _ambito_median
+    assert _ambito_median({}) is None
+    tabla = {"R17": 1700.0, "R24": 1140.0, "R29": 835.0,
+             "PR23": 1205.0, "U48": 35.0, "U49": 28.0}
+    assert _ambito_median(tabla) == 1140.0
+    # Sin zonas R → respaldo con todas.
+    assert _ambito_median({"U27": 443.0, "U29": 378.0}) == 410.5
 
 
 def test_parse_gfi_zona_valor():
