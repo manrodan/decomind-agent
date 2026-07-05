@@ -38,7 +38,11 @@ from mcp_servers.market_research.server import (
 from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.market_research.data_ipv import annual_trend as ipv_annual_trend
 from mcp_servers.renovation.server import estimate_renovation_plan
-from mcp_servers.seccion_censal.server import seccion_signal_gradient
+from mcp_servers.seccion_censal.server import (
+    seccion_lookup,
+    seccion_signal_gradient,
+    stock_age_year,
+)
 from mcp_servers.zona_valor.server import zona_valor_gradient
 from mcp_servers._guardrails import (
     PROVINCE_ALIASES_BY_CP_PREFIX,
@@ -190,6 +194,35 @@ def _tri(value: bool | None) -> int:
 
 
 _BASE_DISPERSION = 0.08  # dispersión intra-zona (un inmueble vs la media de su segmento)
+
+
+def info_dispersion(
+    base: float = _BASE_DISPERSION, *,
+    num_transactions: int = 0,
+    location_signals_agree: bool | None = None,
+    unknown_count: int = 0,
+) -> float:
+    """Dispersión base SENSIBLE A LA INFORMACIÓN disponible. Función pura.
+
+    Una banda honesta se estrecha cuando hay más evidencia y se ensancha
+    cuando falta: muchas compraventas locales (-), las dos señales de
+    micro-ubicación coinciden (-) o discrepan (+), y cada característica
+    sin informar más allá de dos suma incertidumbre (+). Acotada [5%, 12%];
+    el gap inter-fuente se suma aparte en confidence_band.
+    """
+    d = base
+    if num_transactions >= 300:
+        d -= 0.02
+    elif num_transactions >= 100:
+        d -= 0.01
+    elif 0 < num_transactions < 30:
+        d += 0.01
+    if location_signals_agree is True:
+        d -= 0.01
+    elif location_signals_agree is False:
+        d += 0.01
+    d += 0.005 * max(0, unknown_count - 2)
+    return min(max(d, 0.05), 0.12)
 
 
 def confidence_band(
@@ -428,9 +461,22 @@ def run_valuation(
         has_pool=has_pool,
     )
 
+    # 5c. Sección censal del punto (una sola llamada al INE; se reutiliza para
+    # la antigüedad relativa y para el gradiente de mercado de 6a).
+    seccion = {"found": False}
+    if precision == "street" and lat and lon:
+        try:
+            seccion = seccion_lookup(lat, lon)
+        except Exception:
+            seccion = {"found": False}
+    zone_year = (stock_age_year(seccion.get("cusec"), seccion.get("cumun"))
+                 if seccion.get("found") else None)
+
     # 6. Valoración hedónica (valor actual). Con precio del Notariado, su
     # superficie_media activa la curva de superficie RELATIVA (un piso de 50 m²
-    # en una zona de media 94 m² cotiza €/m² muy por encima de la mediana).
+    # en una zona de media 94 m² cotiza €/m² muy por encima de la mediana); el
+    # año típico del parque de la sección (Censo/INE) activa la antigüedad
+    # RELATIVA (edificio del 2000 en barrio de los 70 = premium).
     zone_avg_surface = (nota.get("avg_surface_m2") or 0) if nota.get("found") else 0
     val = estimate_market_value(
         surface_m2=surface_m2,
@@ -438,6 +484,7 @@ def run_valuation(
         condition=condition,
         year_built=year or 0,
         zone_avg_surface_m2=zone_avg_surface if nota_price else 0,
+        zone_typical_year=zone_year or 0,
         **hedonic_kwargs,
     )
     if val.get("error"):
@@ -471,7 +518,9 @@ def run_valuation(
         except Exception:
             grad = {"found": False, "gradient": 1.0}
         try:
-            sec = seccion_signal_gradient(lat=lat, lon=lon)
+            sec = seccion_signal_gradient(
+                lat=lat, lon=lon,
+                cusec=seccion.get("cusec") or "", cumun=seccion.get("cumun") or "")
         except Exception:
             sec = {"found": False, "gradient": 1.0}
         g = _combine_gradients([
@@ -498,12 +547,20 @@ def run_valuation(
             }
 
     # 6b. Banda de confianza centrada en el valor recomendado (ya con el ajuste de
-    # ubicación); el ancho refleja la incertidumbre real (dispersión intra-zona +
-    # desacuerdo entre fuentes).
-    # ponytail: dispersión base 8% es heurística residencial; upgrade a desviación
-    # típica real cuando haya comparables individuales (Idealista Data).
+    # ubicación); el ancho refleja la incertidumbre REAL: dispersión base sensible
+    # a la información (nº de ventas, acuerdo entre señales de ubicación, campos
+    # sin informar) + desacuerdo entre fuentes.
+    # ponytail: upgrade final = dispersión medida con cierres/comparables reales.
+    comps_pcts = list((location_adjustment.get("components") or {}).values())
+    signals_agree = (abs(comps_pcts[0] - comps_pcts[1]) <= 8.0
+                     if len(comps_pcts) == 2 else None)
     interval, band_half = confidence_band(
-        value_per_m2, surface_m2, nota_price, mitma_price)
+        value_per_m2, surface_m2, nota_price, mitma_price,
+        base=info_dispersion(
+            num_transactions=(nota.get("num_transactions") or 0) if nota.get("found") else 0,
+            location_signals_agree=signals_agree,
+            unknown_count=len(assumed),
+        ))
     if interval is not None:
         # ponytail: el central siempre cae dentro (banda simétrica sobre el valor)
         assert interval["low_eur"] <= current_value <= interval["high_eur"], \

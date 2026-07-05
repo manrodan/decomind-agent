@@ -141,10 +141,26 @@ def orientation_factor(exterior: bool | None, orientation: str | None = None) ->
     return 1.0  # exterior sin orientación conocida, o todo desconocido: neutro
 
 
-# ── 6. Antigüedad (curva fina) ─────────────────────────────────────────────
-def antiquity_factor(year_built: int | None) -> float:
+# ── 6. Antigüedad ──────────────────────────────────────────────────────────
+# v3: RELATIVA al parque de la zona cuando se conoce el año típico de
+# construcción de la sección censal (Censo/INE): el €/m² base ya refleja el
+# stock típico, así que lo que se paga es la DIFERENCIA — un edificio del 2000
+# en un barrio de los 70 es de lo mejor del parque (+premium); el mismo
+# edificio en un PAU del 2005 es simplemente normal (neutro). Sin dato de zona:
+# bandas absolutas de siempre. ponytail: 0.3%/año y cota ±10% de partida;
+# calibrar con cierres.
+_ANTIQ_REL_PER_YEAR = 0.003
+_ANTIQ_REL_MIN, _ANTIQ_REL_MAX = 0.90, 1.10
+
+
+def antiquity_factor(year_built: int | None,
+                     zone_typical_year: int | None = None) -> float:
     if not year_built:
         return 1.0
+    if zone_typical_year and zone_typical_year > 1500:
+        delta = year_built - zone_typical_year
+        return max(_ANTIQ_REL_MIN,
+                   min(_ANTIQ_REL_MAX, 1 + delta * _ANTIQ_REL_PER_YEAR))
     age = max(0, 2026 - year_built)
     if age < 5:
         return 1.10
@@ -212,6 +228,7 @@ def value_breakdown(
     has_storage_room: bool = False,
     has_pool: bool = False,
     zone_avg_surface_m2: float | None = None,
+    zone_typical_year: int | None = None,
 ) -> dict[str, Any]:
     """Aplica el modelo hedónico y devuelve valor + desglose auditable.
 
@@ -222,7 +239,7 @@ def value_breakdown(
     factors = {
         "surface": round(surface_factor(surface_m2, zone_avg_surface_m2), 4),
         "condition": round(condition_factor(condition), 4),
-        "antiquity": round(antiquity_factor(year_built), 4),
+        "antiquity": round(antiquity_factor(year_built, zone_typical_year), 4),
         "floor_elevator": round(floor_elevator_factor(floor, has_elevator, is_attic), 4),
         "energy": round(energy_factor(energy_rating), 4),
         "orientation": round(orientation_factor(exterior, orientation), 4),

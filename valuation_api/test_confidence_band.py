@@ -109,6 +109,45 @@ def test_ipv_pick_trend():
     assert ccaa_for_province("Vizcaya") == "País Vasco"
 
 
+def test_info_dispersion():
+    from valuation_api.engine import info_dispersion
+    assert info_dispersion() == 0.08                                   # sin info extra
+    assert info_dispersion(num_transactions=449) == 0.06               # muestra amplia
+    assert info_dispersion(num_transactions=449,
+                           location_signals_agree=True) == 0.05        # + señales de acuerdo
+    assert info_dispersion(num_transactions=449, location_signals_agree=True,
+                           unknown_count=4) == 0.06                    # 2 desconocidos extra
+    assert info_dispersion(num_transactions=12,
+                           location_signals_agree=False,
+                           unknown_count=8) == 0.12                    # techo
+    assert info_dispersion(num_transactions=100000,
+                           location_signals_agree=True) == 0.05        # suelo
+
+
+def test_antiquity_relativa():
+    from mcp_servers.market_research.hedonic import antiquity_factor
+    assert abs(antiquity_factor(2000, 1974) - 1.078) < 1e-9   # +26 años vs parque → +7.8%
+    assert antiquity_factor(1950, 1975) == 0.925              # -25 años → -7.5%
+    assert antiquity_factor(2026, 1950) == 1.10               # cota superior
+    assert antiquity_factor(1900, 2005) == 0.90               # cota inferior
+    assert antiquity_factor(2000, 2000) == 1.0                # en el parque típico → neutro
+    assert antiquity_factor(2000, None) == 1.00               # sin zona → banda absoluta (26 años)
+    assert antiquity_factor(None, 1974) == 1.0                # sin año → neutro
+
+
+def test_stock_age_fallback():
+    import mcp_servers.seccion_censal.server as scs
+    old = scs._stock_cache
+    scs._stock_cache = {"secciones": {"1204006004": 1974}, "municipios": {"12040": 1976}}
+    try:
+        assert scs.stock_age_year("1204006004", "12040") == 1974   # sección directa
+        assert scs.stock_age_year("9999999999", "12040") == 1976   # fallback municipio
+        assert scs.stock_age_year("9999999999", "99999") is None   # sin dato
+        assert scs.stock_age_year(None, None) is None
+    finally:
+        scs._stock_cache = old
+
+
 def test_combine_gradients():
     from valuation_api.engine import _combine_gradients
     assert _combine_gradients([None, None]) == 1.0

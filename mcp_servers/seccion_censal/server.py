@@ -42,23 +42,44 @@ TIMEOUT = 20.0
 _ELASTICITY = 0.7
 _BOUND = 0.25
 
-_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "seccion_signal.json"
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DATA_PATH = _DATA_DIR / "seccion_signal.json"
+_STOCK_AGE_PATH = _DATA_DIR / "stock_age.json"
 
 logger = logging.getLogger("mcp.seccion_censal")
 mcp = FastMCP("seccion_censal")
 
 _data_cache: dict[str, Any] | None = None
+_stock_cache: dict[str, Any] | None = None
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("%s no disponible: %s", path.name, exc)
+        return {}
 
 
 def _load_data() -> dict[str, Any]:
     global _data_cache
     if _data_cache is None:
-        try:
-            _data_cache = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("seccion_signal.json no disponible: %s", exc)
-            _data_cache = {}
+        _data_cache = _load_json(_DATA_PATH)
     return _data_cache
+
+
+def stock_age_year(cusec: str | None, cumun: str | None) -> int | None:
+    """Año mediano de construcción del parque de la sección (Censo/INE), con
+    fallback al municipio. None sin dato → antigüedad absoluta en el hedónico."""
+    global _stock_cache
+    if _stock_cache is None:
+        _stock_cache = _load_json(_STOCK_AGE_PATH)
+    y = None
+    if cusec:
+        y = (_stock_cache.get("secciones") or {}).get(cusec)
+    if not y and cumun:
+        y = (_stock_cache.get("municipios") or {}).get(cumun)
+    return int(y) if y else None
 
 
 def seccion_lookup(lat: float, lon: float) -> dict[str, Any]:
@@ -121,15 +142,20 @@ def _gradient_from_ratios(ratios: list[float], bound: float = _BOUND,
 
 
 @mcp.tool()
-def seccion_signal_gradient(lat: float, lon: float) -> dict[str, Any]:
+def seccion_signal_gradient(lat: float, lon: float, cusec: str = "",
+                            cumun: str = "") -> dict[str, Any]:
     """Gradiente de micro-ubicación por señal de mercado actual: alquiler
     (SERPAVI) y renta por hogar (INE) de la sección censal vs su municipio,
     amortiguado (**0.7) y acotado a ±25%.
 
+    Con `cusec`/`cumun` ya resueltos (el engine hace el lookup una vez y lo
+    reutiliza) se ahorra la llamada al INE.
+
     Devuelve {found, gradient, cusec, alq, alq_muni, renta, renta_muni}.
     {found: False, gradient: 1.0} sin cobertura → no-op para el motor.
     """
-    sec = seccion_lookup(lat, lon)
+    sec = ({"found": True, "cusec": cusec, "cumun": cumun}
+           if cusec and cumun else seccion_lookup(lat, lon))
     if not sec.get("found"):
         return {"found": False, "gradient": 1.0}
     sig = _signal_from_data(_load_data(), sec["cusec"], sec["cumun"])
