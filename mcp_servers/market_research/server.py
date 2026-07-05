@@ -222,6 +222,7 @@ def estimate_market_value(
     has_garage: bool = False,
     has_storage_room: bool = False,
     has_pool: bool = False,
+    zone_avg_surface_m2: float = 0,
 ) -> dict[str, Any]:
     """Estima el valor de mercado con un modelo HEDÓNICO profesional (v2).
 
@@ -250,6 +251,9 @@ def estimate_market_value(
         has_garage: ¿Plaza de garaje incluida en el precio?
         has_storage_room: ¿Trastero?
         has_pool: ¿Piscina / zonas comunes?
+        zone_avg_surface_m2: Superficie media de las compraventas de la zona
+            (del Notariado). >0 activa la curva de superficie RELATIVA
+            (€/m² ~ (media_zona/superficie)^alpha); 0 = bandas absolutas.
 
     Returns:
         {value_eur, value_eur_per_m2, base_eur_per_m2, combined_factor,
@@ -286,6 +290,7 @@ def estimate_market_value(
         has_garage=has_garage,
         has_storage_room=has_storage_room,
         has_pool=has_pool,
+        zone_avg_surface_m2=zone_avg_surface_m2 if zone_avg_surface_m2 > 0 else None,
     )
 
     # Guardrails de salida: marca si la valoración cae fuera de rangos de mercado.

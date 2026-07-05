@@ -66,6 +66,48 @@ def test_gradiente_zona_amortiguado_y_acotado():
     assert _clamp_gradient(0, 2000) == 1.0                 # subject 0 → guard
 
 
+def test_surface_factor_relativo():
+    # Con superficie media de zona: curva continua (media/superficie)^0.30.
+    from mcp_servers.market_research.hedonic import surface_factor
+    assert abs(surface_factor(50, 94) - (94 / 50) ** 0.30) < 1e-9  # ≈ +21%
+    assert surface_factor(94, 94) == 1.0                # en la media → neutro
+    assert surface_factor(20, 200) == 1.35              # tope superior
+    assert surface_factor(400, 90) == 0.80              # suelo
+    assert surface_factor(50, None) == 1.10             # sin media → banda absoluta
+    assert surface_factor(50, 0) == 1.10
+
+
+def test_blend_shrinkage_notariado():
+    from mcp_servers.notariado.server import _blend_price
+    cp = {"precio_m2": 1000.0, "total": 30, "superficie_media": 80.0}
+    muni = {"precio_m2": 1400.0, "total": 900}
+    attrs, w = _blend_price(cp, muni)
+    assert w == 0.5                                     # n/(n+30) con n=30
+    assert attrs["precio_m2"] == 1200.0                 # mezcla 50/50
+    assert attrs["superficie_media"] == 80.0            # composición local se conserva
+    assert _blend_price(cp, None) == (cp, 1.0)          # sin municipio → CP puro
+    assert _blend_price(None, muni)[1] == 0.0           # sin CP → municipio puro
+    assert _blend_price(None, None) is None
+
+
+def test_ipv_pick_trend():
+    from mcp_servers.market_research.data_ipv import pick_trend, ccaa_for_province
+    items = [
+        {"Nombre": "Nacional. General. Variación anual. ",
+         "Data": [{"Valor": 12.9, "Anyo": 2025, "FK_Periodo": 22}]},
+        {"Nombre": "Comunitat Valenciana. Vivienda segunda mano. Variación anual. ",
+         "Data": [{"Valor": 14.0, "Anyo": 2025, "FK_Periodo": 22}]},
+    ]
+    t = pick_trend(items, "Comunitat Valenciana", "usada")
+    assert t["annual_pct"] == 14.0 and t["scope"] == "Comunitat Valenciana"
+    # CCAA sin serie pedida → cae a Nacional (General).
+    t2 = pick_trend(items, "Aragón", "")
+    assert t2["annual_pct"] == 12.9 and t2["scope"] == "Nacional"
+    assert ccaa_for_province("Castellón/Castelló") == "Comunitat Valenciana"
+    assert ccaa_for_province("Madrid") == "Madrid, Comunidad de"
+    assert ccaa_for_province("Vizcaya") == "País Vasco"
+
+
 def test_fallback_prefiere_residencial():
     # Caso hotel Voramar: el anillo ve U25 (508) y R17 (1700) → gana la R.
     from mcp_servers.zona_valor.server import _pick_fallback_zone

@@ -35,6 +35,7 @@ from mcp_servers.market_research.server import (
     check_source_agreement,
 )
 from mcp_servers.market_research.features_parser import parse_property_features
+from mcp_servers.market_research.data_ipv import annual_trend as ipv_annual_trend
 from mcp_servers.renovation.server import estimate_renovation_plan
 from mcp_servers.zona_valor.server import zona_valor_gradient
 from mcp_servers._guardrails import (
@@ -44,6 +45,9 @@ from mcp_servers._guardrails import (
 )
 
 _FLOOR_UNKNOWN = -999
+# Lag efectivo del snapshot del Notariado (ventana de agregación ~12 meses →
+# punto medio ~6m + retardo de publicación ~3m) para la reexpresión con el IPV.
+_TREND_LAG_YEARS = 0.75
 
 # Títulos de anuncio que llegan como "dirección": "Piso en venta en Calle X",
 # "Ático en alquiler en Av. Y"... Nominatim no los geocodifica.
@@ -363,6 +367,33 @@ def run_valuation(
     # 5. Precio base: Notariado preferente, MITMA fallback
     base_price = nota_price or mitma_price or 1800.0
 
+    # 5b. Reexpresión temporal a "hoy" (IPV del INE por CCAA y tipo). El
+    # snapshot del Notariado agrega ~12 meses de compraventas → su punto medio
+    # queda ~9 meses atrás; con el mercado a doble dígito anual eso es un sesgo
+    # a la baja sistemático. Se aplica a la BASE (también la lee el Dossier
+    # ROI: el €/m² de zona reexpresado a hoy es el correcto para ambos).
+    # Fail-safe: sin red/sin dato → no-op. ponytail: lag 0.75 años estimado
+    # (ventana 12m + retardo de publicación); calibrar con cierres.
+    temporal_adjustment: dict[str, Any] = {"applied": False}
+    if nota_price:
+        try:
+            trend = ipv_annual_trend(prov, construction)
+        except Exception:
+            trend = None
+        if trend and abs(trend.get("annual_pct") or 0) >= 1.0:
+            t_factor = (1 + trend["annual_pct"] / 100) ** _TREND_LAG_YEARS
+            base_price = round(base_price * t_factor, 1)
+            temporal_adjustment = {
+                "applied": True,
+                "factor": round(t_factor, 4),
+                "pct": round((t_factor - 1) * 100, 1),
+                "ipv_annual_pct": trend["annual_pct"],
+                "period": trend.get("period"),
+                "scope": trend.get("scope"),
+                "lag_years": _TREND_LAG_YEARS,
+                "source": "ine_ipv",
+            }
+
     hedonic_kwargs = dict(
         floor=_FLOOR_UNKNOWN if floor is None else floor,
         has_elevator=_tri(has_elevator),
@@ -378,12 +409,16 @@ def run_valuation(
         has_pool=has_pool,
     )
 
-    # 6. Valoración hedónica (valor actual)
+    # 6. Valoración hedónica (valor actual). Con precio del Notariado, su
+    # superficie_media activa la curva de superficie RELATIVA (un piso de 50 m²
+    # en una zona de media 94 m² cotiza €/m² muy por encima de la mediana).
+    zone_avg_surface = (nota.get("avg_surface_m2") or 0) if nota.get("found") else 0
     val = estimate_market_value(
         surface_m2=surface_m2,
         median_price_eur_per_m2=base_price,
         condition=condition,
         year_built=year or 0,
+        zone_avg_surface_m2=zone_avg_surface if nota_price else 0,
         **hedonic_kwargs,
     )
     if val.get("error"):
@@ -488,6 +523,7 @@ def run_valuation(
             "interval": interval,
             "confidence": confidence,
             "location_adjustment": location_adjustment,
+            "temporal_adjustment": temporal_adjustment,
             "value_eur_per_m2": value_per_m2,
             "base_eur_per_m2": val.get("base_eur_per_m2"),
             "combined_factor": val.get("combined_factor"),
@@ -524,6 +560,8 @@ def run_valuation(
                 "is_estimated": nota.get("is_estimated"),
                 "segment": nota.get("segment"),
                 "segment_fallback": nota.get("segment_fallback"),
+                "avg_surface_m2": nota.get("avg_surface_m2") or None,
+                "blend": nota.get("blend"),
             } if nota.get("found") else None,
             "mitma": {
                 "price_eur_per_m2": mitma_price,

@@ -47,6 +47,34 @@ _TIPO_LABELS = {7: "nueva", 9: "usada", _AGG: "todas"}
 
 # Mínimo de transacciones para fiarse del dato de un nivel; si no, baja de nivel.
 MIN_TX = 15
+# Shrinkage jerárquico: por debajo de _N_FULL transacciones el precio del CP se
+# MEZCLA con el del municipio (w = n/(n+_K_SHRINK)) en vez del acantilado
+# MIN_TX (que descartaba un CP con 12 ventas reales para caer al agregado).
+# ponytail: K=30 es prior estándar de credibilidad; calibrar con backtest.
+_N_FULL = 150
+_K_SHRINK = 30
+
+
+def _blend_price(cp_attrs: dict | None, muni_attrs: dict | None) -> tuple[dict, float] | None:
+    """Mezcla CP↔municipio ponderada por muestra. Devuelve (attrs, w_cp) o None.
+
+    w_cp = n_cp/(n_cp+K). El precio mezclado va en attrs['precio_m2']; la
+    superficie media y el nº de transacciones se mantienen los del CP si
+    existe (composición local), si no los del municipio. Función pura.
+    """
+    n_cp = (cp_attrs or {}).get("total") or 0
+    cp_price = (cp_attrs or {}).get("precio_m2") or 0
+    muni_price = (muni_attrs or {}).get("precio_m2") or 0
+    if not cp_price and not muni_price:
+        return None
+    if not muni_price:
+        return dict(cp_attrs), 1.0
+    if not cp_price:
+        return dict(muni_attrs), 0.0
+    w = n_cp / (n_cp + _K_SHRINK)
+    out = dict(cp_attrs)
+    out["precio_m2"] = w * cp_price + (1 - w) * muni_price
+    return out, round(w, 3)
 
 logger = logging.getLogger("mcp.notariado")
 mcp = FastMCP("notariado")
@@ -174,18 +202,40 @@ def notariado_price(
         return (f"{geo} AND tipo_construccion_id={tp} "
                 f"AND clase_finca_urbana_id={cl}")
 
-    # Por cada segmento candidato baja CP → municipio exigiendo MIN_TX; el
-    # primero que cumple gana (segmento más fino y con muestra suficiente).
+    # Por cada segmento candidato baja CP → municipio. Un CP con muestra amplia
+    # (≥_N_FULL) gana directo; con muestra corta se MEZCLA con el municipio
+    # (shrinkage, w = n/(n+K)) en vez de descartarlo por el acantilado MIN_TX.
     for cl, tp in candidates:
+        cp_row = None
         if postal_code:
             rows = _query(4, _where(cl, tp, f"cp='{_esc(postal_code)}'"), out)
-            if rows and (rows[0].get("total") or 0) >= MIN_TX:
-                return _pack(rows[0], "codigo_postal", f"CP {postal_code}",
+            cp_row = rows[0] if rows and (rows[0].get("precio_m2") or 0) > 0 else None
+            if cp_row and (cp_row.get("total") or 0) >= _N_FULL:
+                return _pack(cp_row, "codigo_postal", f"CP {postal_code}",
                              cl, tp, requested)
+        muni_row = None
         if municipality:
             rows = _query(3, _where(cl, tp, f"name_muni='{_esc(municipality)}'"), out)
-            if rows and (rows[0].get("total") or 0) >= MIN_TX:
-                return _pack(rows[0], "municipio", municipality, cl, tp, requested)
+            muni_row = (rows[0] if rows and (rows[0].get("total") or 0) >= MIN_TX
+                        else None)
+        blended = _blend_price(cp_row, muni_row)
+        if blended:
+            attrs, w_cp = blended
+            n_cp = (cp_row or {}).get("total") or 0
+            # Sin refuerzo municipal, un CP por debajo de MIN_TX no basta solo:
+            # sigue al siguiente segmento/agregado (comportamiento histórico).
+            if muni_row is None and n_cp < MIN_TX:
+                continue
+            if w_cp >= 0.5:
+                r = _pack(attrs, "codigo_postal", f"CP {postal_code}", cl, tp, requested)
+            else:
+                r = _pack(attrs, "municipio", municipality or f"CP {postal_code}",
+                          cl, tp, requested)
+            if muni_row is not None and cp_row is not None and w_cp < 1.0:
+                r["blend"] = {"w_cp": w_cp, "cp_tx": n_cp,
+                              "cp_price_eur_per_m2": round(cp_row.get("precio_m2") or 0, 1),
+                              "muni_price_eur_per_m2": round(muni_row.get("precio_m2") or 0, 1)}
+            return r
 
     # Provincia: solo agregado (capa 2, sin segmento fino).
     if province:

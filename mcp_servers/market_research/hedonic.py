@@ -32,13 +32,26 @@ from typing import Any
 # ── 1. Superficie (no lineal) ──────────────────────────────────────────────
 # Pisos pequeños tienen mayor €/m² (más demanda, escasez); pisos muy grandes
 # menor €/m² (menos compradores, "descuento por tamaño").
-def surface_factor(surface_m2: float) -> float:
-    # ponytail: escalones más finos en el tramo pequeño; el €/m² base del
-    # Notariado refleja la superficie media de la zona (~90 m²), así que un
-    # piso de 50 m² merece prima real, no la casi-neutra de antes (1.03).
-    # Upgrade: curva continua calibrada por regresión cuando haya microdatos.
+#
+# v3: curva RELATIVA a la superficie media de la zona. El €/m² del Notariado
+# es la mediana de compraventas de la zona, cuyo tamaño medio publica el propio
+# Notariado (`superficie_media`, p.ej. 94 m² en CP 12006). Un piso de 50 m² en
+# esa zona cotiza muy por encima de esa mediana (caso real: vendido a 2.160
+# €/m² vs mediana 1.268): €/m² ≈ mediana × (media_zona/superficie)^alpha.
+# ponytail: alpha 0.30 es el punto de partida de literatura (elasticidad
+# tamaño→€/m² ~ -0.2/-0.35); calibrar con idealista18/cierres reales.
+_SURFACE_ALPHA = 0.30
+_SURFACE_REL_MIN, _SURFACE_REL_MAX = 0.80, 1.35
+
+
+def surface_factor(surface_m2: float, zone_avg_m2: float | None = None) -> float:
     if surface_m2 <= 0:
         return 1.0
+    # Con superficie media de la zona (del Notariado): curva continua relativa.
+    if zone_avg_m2 and zone_avg_m2 > 0:
+        raw = (zone_avg_m2 / surface_m2) ** _SURFACE_ALPHA
+        return max(_SURFACE_REL_MIN, min(_SURFACE_REL_MAX, raw))
+    # Sin ella (fallback MITMA/1800): bandas absolutas de siempre.
     if surface_m2 < 40:
         return 1.15
     if surface_m2 < 55:
@@ -195,6 +208,7 @@ def value_breakdown(
     has_garage: bool = False,
     has_storage_room: bool = False,
     has_pool: bool = False,
+    zone_avg_surface_m2: float | None = None,
 ) -> dict[str, Any]:
     """Aplica el modelo hedónico y devuelve valor + desglose auditable.
 
@@ -203,7 +217,7 @@ def value_breakdown(
     que se aplicó factor neutro (`unknown_inputs`).
     """
     factors = {
-        "surface": round(surface_factor(surface_m2), 4),
+        "surface": round(surface_factor(surface_m2, zone_avg_surface_m2), 4),
         "condition": round(condition_factor(condition), 4),
         "antiquity": round(antiquity_factor(year_built), 4),
         "floor_elevator": round(floor_elevator_factor(floor, has_elevator, is_attic), 4),
