@@ -109,6 +109,32 @@ def test_ipv_pick_trend():
     assert ccaa_for_province("Vizcaya") == "País Vasco"
 
 
+def test_combine_gradients():
+    from valuation_api.engine import _combine_gradients
+    assert _combine_gradients([None, None]) == 1.0
+    assert _combine_gradients([1.2, None]) == 1.2          # una sola señal → tal cual
+    assert _combine_gradients([0.9154, 1.10]) == 1.0035    # discrepantes → se moderan
+    assert _combine_gradients([1.30, 1.25]) == 1.2748      # ambas altas → media geom.
+    assert _combine_gradients([2.0, 2.0]) == 1.30          # cota superior ±30%
+    assert _combine_gradients([0.4]) == 0.70               # cota inferior
+
+
+def test_seccion_signal_puro():
+    from mcp_servers.seccion_censal.server import _signal_from_data, _gradient_from_ratios
+    data = {"secciones": {"1204001001": [8.0, 35000]},
+            "municipios": {"12040": [6.4, 28000]}}
+    sig = _signal_from_data(data, "1204001001", "12040")
+    assert sig["ratios"] == [1.25, 1.25]
+    g = _gradient_from_ratios(sig["ratios"])
+    assert abs(g - 1.25 ** 0.7) < 1e-9                     # ≈ +16.9%
+    assert _signal_from_data(data, "9999999999", "12040") is None
+    assert _signal_from_data({}, "x", "y") is None
+    # Sección con solo renta (sin alquiler) → un ratio, funciona igual.
+    data2 = {"secciones": {"A": [None, 42000]}, "municipios": {"M": [6.0, 28000]}}
+    assert _signal_from_data(data2, "A", "M")["ratios"] == [1.5]
+    assert _gradient_from_ratios([]) == 1.0
+
+
 def test_fallback_prefiere_residencial():
     # Caso hotel Voramar: el anillo ve U25 (508) y R17 (1700) → gana la R.
     from mcp_servers.zona_valor.server import _pick_fallback_zone

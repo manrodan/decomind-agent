@@ -22,6 +22,7 @@ Reutiliza la lógica ya escrita y testeada (evals 100%) en mcp_servers/.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -37,6 +38,7 @@ from mcp_servers.market_research.server import (
 from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.market_research.data_ipv import annual_trend as ipv_annual_trend
 from mcp_servers.renovation.server import estimate_renovation_plan
+from mcp_servers.seccion_censal.server import seccion_signal_gradient
 from mcp_servers.zona_valor.server import zona_valor_gradient
 from mcp_servers._guardrails import (
     PROVINCE_ALIASES_BY_CP_PREFIX,
@@ -48,6 +50,23 @@ _FLOOR_UNKNOWN = -999
 # Lag efectivo del snapshot del Notariado (ventana de agregación ~12 meses →
 # punto medio ~6m + retardo de publicación ~3m) para la reexpresión con el IPV.
 _TREND_LAG_YEARS = 0.75
+# Cota del gradiente de micro-ubicación COMBINADO (ponencia × sección censal).
+_LOCATION_BOUND = 0.30
+
+
+def _combine_gradients(gradients: list[float | None]) -> float:
+    """Media geométrica de los gradientes disponibles, acotada. Función pura.
+
+    Cada señal ya viene amortiguada/acotada por su módulo; la media geométrica
+    hace que dos señales discrepantes se moderen entre sí (ponencia vieja que
+    dice -8% + mercado actual que dice +10% → ~+1%).
+    """
+    vals = [g for g in gradients if g and g > 0]
+    if not vals:
+        return 1.0
+    g = math.exp(sum(math.log(v) for v in vals) / len(vals))
+    g = max(1 - _LOCATION_BOUND, min(1 + _LOCATION_BOUND, g))
+    return round(g, 4)
 
 # Títulos de anuncio que llegan como "dirección": "Piso en venta en Calle X",
 # "Ático en alquiler en Av. Y"... Nominatim no los geocodifica.
@@ -436,11 +455,14 @@ def run_valuation(
 
     # 6a. Ajuste FINO de ubicación dentro del CP (zona de valor del Catastro).
     # El Notariado solo baja a CP: dentro del CP todas las calles cobran igual.
-    # Gradiente relativo acotado (±12%) que inclina el valor hacia la posición de
-    # la calle en su entorno inmediato. Solo con dirección exacta (a nivel zona el
-    # punto es el centroide del municipio y el anillo no tiene sentido). NO toca
-    # `base_eur_per_m2` (el Dossier ROI lo lee y debe seguir siendo el €/m² de
-    # zona) → aislamiento por construcción. No-op donde no hay cobertura.
+    # DOS señales independientes de micro-ubicación, combinadas por media
+    # geométrica (cada una ya viene amortiguada y acotada por su módulo):
+    #   - Ponencia catastral (zona de valor): estructural, pero puede estar vieja.
+    #   - Sección censal (alquiler SERPAVI + renta INE): mercado ACTUAL — corrige
+    #     ponencias desactualizadas y cubre donde no hay ponencia (forales).
+    # Solo con dirección exacta (a nivel zona el punto es el centroide del
+    # municipio). NO toca `base_eur_per_m2` (el Dossier ROI lo lee y debe seguir
+    # siendo el €/m² de zona). No-op donde no hay cobertura de ninguna.
     value_per_m2 = val.get("value_eur_per_m2")
     location_adjustment: dict[str, Any] = {"applied": False}
     if precision == "street" and lat and lon and value_per_m2:
@@ -448,17 +470,31 @@ def run_valuation(
             grad = zona_valor_gradient(lat=lat, lon=lon)
         except Exception:
             grad = {"found": False, "gradient": 1.0}
-        g = grad.get("gradient") or 1.0
-        if grad.get("found") and g != 1.0:
+        try:
+            sec = seccion_signal_gradient(lat=lat, lon=lon)
+        except Exception:
+            sec = {"found": False, "gradient": 1.0}
+        g = _combine_gradients([
+            grad.get("gradient") if grad.get("found") else None,
+            sec.get("gradient") if sec.get("found") else None,
+        ])
+        if g != 1.0:
             value_per_m2 = round(value_per_m2 * g)
             current_value = round(current_value * g)
+            components = {}
+            if grad.get("found"):
+                components["catastro_zona_valor"] = round((grad["gradient"] - 1) * 100, 1)
+            if sec.get("found"):
+                components["seccion_censal"] = round((sec["gradient"] - 1) * 100, 1)
             location_adjustment = {
                 "applied": True,
                 "gradient": g,
                 "pct": round((g - 1) * 100, 1),
                 "zone_code": grad.get("zone_code"),
                 "neighborhood_mean_eur_m2": grad.get("neighborhood_mean"),
-                "source": "catastro_zona_valor",
+                "cusec": sec.get("cusec"),
+                "components": components,
+                "source": "+".join(components.keys()),
             }
 
     # 6b. Banda de confianza centrada en el valor recomendado (ya con el ajuste de
