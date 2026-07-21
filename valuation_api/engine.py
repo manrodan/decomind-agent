@@ -37,6 +37,7 @@ from mcp_servers.market_research.server import (
 )
 from mcp_servers.market_research.features_parser import parse_property_features
 from mcp_servers.market_research.data_ipv import annual_trend as ipv_annual_trend
+from mcp_servers.market_research.data_mitma import MITMA_QUARTER
 from mcp_servers.renovation.server import estimate_renovation_plan
 from mcp_servers.seccion_censal.server import (
     seccion_lookup,
@@ -49,6 +50,11 @@ from mcp_servers._guardrails import (
     _norm_province,
     cp_matches_province,
 )
+
+# Versión del MODELO de valoración (lógica/calibraciones, no la API HTTP).
+# Bump manual en cada cambio que altere resultados; queda persistida junto a
+# cada valoración guardada para poder interpretar históricos.
+MODEL_VERSION = "valuation-v2.7.0"
 
 _FLOOR_UNKNOWN = -999
 # Lag efectivo del snapshot del Notariado (ventana de agregación ~12 meses →
@@ -410,14 +416,33 @@ def run_valuation(
                            property_class=property_class, construction=construction)
     nota_price = nota.get("price_eur_per_m2") if nota.get("found") else None
 
-    # 4. MITMA (find_comparables -> mediana tasada, 2ª fuente)
+    # 4. MITMA (find_comparables -> mediana tasada, 2ª fuente).
+    # data_source=="fallback" = resolve_base_price agotó MITMA municipio/
+    # provincia y devolvió el 1800 €/m² fijo de España: eso NO es evidencia,
+    # es una invención plausible — se descarta para la abstención de abajo.
     comps = find_comparables(
         lat=lat, lon=lon, province=prov, municipality=muni, district=distr,
     )
-    mitma_price = comps.get("median_price_eur_per_m2")
+    mitma_price = (comps.get("median_price_eur_per_m2")
+                   if comps.get("data_source") != "fallback" else None)
 
-    # 5. Precio base: Notariado preferente, MITMA fallback
-    base_price = nota_price or mitma_price or 1800.0
+    # 5. Precio base: Notariado preferente, MITMA fallback. Sin NINGUNA fuente
+    # oficial NO se inventa un €/m² (antes: 1800 fijo → cifra plausible pero
+    # potencialmente muy errónea). Abstención explícita: found=false con
+    # reason=insufficient_evidence — NO es un error, es "sin datos aquí".
+    base_price = nota_price or mitma_price
+    if not base_price:
+        return {
+            "found": False,
+            "reason": "insufficient_evidence",
+            "message": ("No hay compraventas del Notariado ni tasaciones MITMA "
+                        "suficientes en esta zona para una valoración fiable."),
+            "location": {
+                "municipality": muni, "province": prov, "district": distr,
+                "postal_code": cp, "precision": precision,
+            },
+            "model_version": MODEL_VERSION,
+        }
 
     # 5b. Reexpresión temporal a "hoy" (IPV del INE por CCAA y tipo). El
     # snapshot del Notariado agrega ~12 meses de compraventas → su punto medio
@@ -441,6 +466,11 @@ def run_valuation(
                 "pct": round((t_factor - 1) * 100, 1),
                 "ipv_annual_pct": trend["annual_pct"],
                 "period": trend.get("period"),
+                # Frescura de la serie: si el INE rota de base (como la 25171
+                # congelada en 2025T4), stale=true delata el dato rancio en
+                # vez de envejecer en silencio.
+                "data_as_of": trend.get("data_as_of"),
+                "stale": bool(trend.get("stale")),
                 "scope": trend.get("scope"),
                 "lag_years": _TREND_LAG_YEARS,
                 "source": "ine_ipv",
@@ -599,6 +629,7 @@ def run_valuation(
 
     result: dict[str, Any] = {
         "found": True,
+        "model_version": MODEL_VERSION,
         "address": geo.get("display_name") or address,
         "location": {
             "municipality": muni, "province": prov, "district": distr,
@@ -659,6 +690,7 @@ def run_valuation(
             "mitma": {
                 "price_eur_per_m2": mitma_price,
                 "data_source": comps.get("data_source"),
+                "data_as_of": MITMA_QUARTER,
             },
             "agreement": agreement,
         },

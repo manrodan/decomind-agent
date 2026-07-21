@@ -213,6 +213,41 @@ def test_parse_gfi_sin_cobertura():
     assert _parse_gfi('<td>Municipio</td> ponencia.aspx?del=41&mun=0') == {"found": False}
 
 
+def test_abstencion_sin_fuentes():
+    # Sin Notariado NI MITMA real (el 1800 fijo de resolve_base_price llega
+    # etiquetado data_source="fallback" y NO cuenta como evidencia) el motor
+    # se abstiene: found=false + insufficient_evidence, nunca una cifra
+    # inventada. Todo monkeypatcheado — sin red.
+    import valuation_api.engine as e
+    saved = {n: getattr(e, n) for n in
+             ("geocode_address", "catastro_lookup", "notariado_price",
+              "find_comparables")}
+    try:
+        e.geocode_address = lambda **kw: {
+            "found": True, "lat": 40.0, "lon": -3.7,
+            "municipality": "Villatest", "province": "Testprovincia"}
+        e.catastro_lookup = lambda lat, lon: {"found": False}
+        e.notariado_price = lambda **kw: {"found": False}
+        e.find_comparables = lambda **kw: {
+            "median_price_eur_per_m2": 1800.0, "data_source": "fallback"}
+        r = e.run_valuation(address="Calle Falsa 123", locality="Villatest",
+                            province="Testprovincia", surface_m2=90,
+                            include_renovation=False)
+        assert r["found"] is False, r
+        assert r["reason"] == "insufficient_evidence", r
+        assert r.get("message") and r.get("model_version"), r
+        # Un MITMA real (no-fallback) sí basta para valorar.
+        e.find_comparables = lambda **kw: {
+            "median_price_eur_per_m2": 1500.0, "data_source": "mitma_province"}
+        r2 = e.run_valuation(address="Calle Falsa 123", locality="Villatest",
+                             province="Testprovincia", surface_m2=90,
+                             include_renovation=False)
+        assert r2["found"] is True and r2["valuation"]["current_value_eur"], r2
+    finally:
+        for n, fn in saved.items():
+            setattr(e, n, fn)
+
+
 if __name__ == "__main__":
     checks = [v for k, v in sorted(globals().items())
               if k.startswith("test_") and callable(v)]

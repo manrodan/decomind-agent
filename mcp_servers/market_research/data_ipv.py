@@ -1,5 +1,5 @@
 """
-IPV del INE (tabla Tempus3 25171) — tendencia anual de precios por CCAA.
+IPV del INE (tabla Tempus3 79563, base 2025) — tendencia anual por CCAA.
 
 El FeatureServer del Notariado es una FOTO (sin campo temporal; ventana de
 agregación ~12 meses, último refresh visible en editingInfo). En un mercado
@@ -8,10 +8,17 @@ reexpresar a "hoy" mete un sesgo sistemático a la baja. Este módulo da la
 variación anual del Índice de Precios de Vivienda del INE por CCAA y por
 tipo (general / nueva / segunda mano) para corregirlo.
 
-API pública JSON del INE (sin key): DATOS_TABLA/25171?nult=1 devuelve, por
-serie ("<CCAA>. <Tipo>. Variación anual."), el último dato trimestral.
-Cacheado en proceso 24 h (el IPV es trimestral). Cualquier fallo → None
-(el motor lo trata como no-op, nunca rompe una valoración).
+⚠️ La tabla 25171 (base 2015) quedó HISTÓRICA el 2026-06-08, congelada en
+2025T4 — seguía respondiendo datos, así que el ajuste temporal envejecía en
+silencio. La vigente es la 79563 (base 2025), mismo contrato de series
+("<CCAA>. <Tipo>. Variación anual."). Si el INE vuelve a rotar de base, el
+self-check de contrato (valuation_api/test_ipv_contract.py) se pone en rojo
+y la respuesta del motor marca `stale: true`.
+
+API pública JSON del INE (sin key): DATOS_TABLA/79563?nult=1 devuelve, por
+serie, el último dato trimestral. Cacheado en proceso 24 h (el IPV es
+trimestral). Cualquier fallo → None (el motor lo trata como no-op, nunca
+rompe una valoración).
 """
 from __future__ import annotations
 
@@ -22,7 +29,7 @@ from typing import Any
 
 import httpx
 
-IPV_URL = "https://servicios.ine.es/wstempus/js/ES/DATOS_TABLA/25171"
+IPV_URL = "https://servicios.ine.es/wstempus/js/ES/DATOS_TABLA/79563"
 HEADERS = {"User-Agent": "decomind-agent-challenge/0.1 (info@decomind.es)"}
 TIMEOUT = 20.0
 _TTL_S = 24 * 3600
@@ -30,7 +37,7 @@ _TTL_S = 24 * 3600
 logger = logging.getLogger("mcp.data_ipv")
 
 # provincia (normalizada sin acentos, lowercase) → CCAA tal y como la nombra
-# el INE en la tabla 25171. Cubre las 52 provincias + variantes bilingües.
+# el INE en la tabla 79563. Cubre las 52 provincias + variantes bilingües.
 _PROV_TO_CCAA = {
     # Andalucía
     "almeria": "Andalucía", "cadiz": "Andalucía", "cordoba": "Andalucía",
@@ -123,6 +130,28 @@ def _fetch_items() -> list[dict] | None:
     return _cache["items"]  # payload viejo si lo hay; None si nunca hubo
 
 
+def _quarter(fk_periodo: Any) -> int | None:
+    """FK_Periodo de Tempus3 → trimestre 1-4 (19=T1 … 22=T4)."""
+    return fk_periodo - 18 if isinstance(fk_periodo, int) and 19 <= fk_periodo <= 22 else None
+
+
+def is_stale(anyo: Any, quarter: int | None, now: float | None = None) -> bool:
+    """¿El último periodo publicado está rancio? Función pura (acepta `now`).
+
+    El IPV publica con ~1 trimestre de retardo; >9 meses desde el FIN del
+    trimestre = la tabla ha dejado de actualizarse (p. ej. rotación de base
+    del INE, como la 25171 congelada en 2025T4).
+    """
+    try:
+        year = int(anyo)
+    except (TypeError, ValueError):
+        return True
+    if not quarter:
+        return True
+    end = time.mktime((year, quarter * 3 + 1, 1, 0, 0, 0, 0, 0, -1))
+    return ((now or time.time()) - end) > 9 * 30 * 24 * 3600
+
+
 def pick_trend(items: list[dict], ccaa: str | None,
                construction: str = "") -> dict[str, Any] | None:
     """Extrae la variación anual de la serie que toca. Función pura (testeable).
@@ -138,9 +167,13 @@ def pick_trend(items: list[dict], ccaa: str | None,
                 data = it.get("Data") or []
                 if data and data[0].get("Valor") is not None:
                     d = data[0]
+                    q = _quarter(d.get("FK_Periodo"))
+                    period = f"{d.get('Anyo', '')}T{q or d.get('FK_Periodo', '')}"
                     return {
                         "annual_pct": float(d["Valor"]),
-                        "period": f"{d.get('Anyo', '')}T{d.get('FK_Periodo', '')}",
+                        "period": period,
+                        "data_as_of": period,
+                        "stale": is_stale(d.get("Anyo"), q),
                         "scope": scope,
                         "serie": serie,
                     }
