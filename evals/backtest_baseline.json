@@ -1,57 +1,57 @@
 {
-  "generated_at": "2026-07-22T07:13:05+00:00",
-  "model_version": "valuation-v2.7.0",
+  "generated_at": "2026-07-22T15:01:47+00:00",
+  "model_version": "valuation-v2.8.0",
   "dataset": "idealista18 (asking prices 2018 — backtest estructural, nivel corregido por ciudad)",
   "micro_location": true,
   "sample_per_city": 100,
   "cities": {
     "Madrid": {
       "n": 99,
-      "scale_k": 0.6855,
-      "mdape_pct": 18.8,
-      "ppe10_pct": 30.3,
-      "ppe20_pct": 54.5,
+      "scale_k": 0.667,
+      "mdape_pct": 19.2,
+      "ppe10_pct": 29.3,
+      "ppe20_pct": 53.5,
       "skipped": 1,
       "bias_by_surface_tranche_pct": {
-        "0-50 m2": 18.1,
-        "50-80 m2": 0.0,
-        "80-120 m2": -0.9,
-        "120-+ m2": -3.1
+        "0-50 m2": 26.5,
+        "50-80 m2": -1.1,
+        "80-120 m2": -0.8,
+        "120-+ m2": -3.5
       }
     },
     "Barcelona": {
       "n": 100,
-      "scale_k": 0.9571,
-      "mdape_pct": 13.5,
-      "ppe10_pct": 45.0,
-      "ppe20_pct": 63.0,
+      "scale_k": 0.9146,
+      "mdape_pct": 11.7,
+      "ppe10_pct": 44.0,
+      "ppe20_pct": 61.0,
       "skipped": 0,
       "bias_by_surface_tranche_pct": {
-        "50-80 m2": -6.1,
-        "80-120 m2": 5.9,
-        "120-+ m2": 3.5
+        "50-80 m2": -5.9,
+        "80-120 m2": 5.1,
+        "120-+ m2": -0.7
       }
     },
     "Valencia": {
       "n": 99,
-      "scale_k": 0.6336,
-      "mdape_pct": 17.9,
-      "ppe10_pct": 25.3,
-      "ppe20_pct": 54.5,
+      "scale_k": 0.615,
+      "mdape_pct": 18.0,
+      "ppe10_pct": 27.3,
+      "ppe20_pct": 56.6,
       "skipped": 1,
       "bias_by_surface_tranche_pct": {
-        "50-80 m2": 1.6,
-        "80-120 m2": 3.0,
-        "120-+ m2": -16.8
+        "50-80 m2": 0.9,
+        "80-120 m2": 3.8,
+        "120-+ m2": -10.7
       }
     }
   },
   "global": {
-    "mdape_pct": 17.9,
+    "mdape_pct": 18.0,
     "bias_by_surface_tranche_pct": {
-      "120-+ m2": -3.3,
-      "50-80 m2": -4.0,
-      "80-120 m2": 4.5
+      "120-+ m2": -3.2,
+      "50-80 m2": -2.5,
+      "80-120 m2": 3.6
     }
   }
 }

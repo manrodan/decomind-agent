@@ -162,10 +162,17 @@ def _predict(row, city_cfg: dict, cp: str, use_micro: bool) -> float | None:
         construction=inp["construction"])
     if not nota.get("found") or not nota.get("price_eur_per_m2"):
         return None
+    # Espejo de la regla v2.8.0 del engine: base ya segmentada 'nueva' →
+    # estado neutro (evita contar la prima de obra nueva dos veces). El
+    # harness DEBE replicar el pipeline de producción o mide otro motor.
+    condition = inp["condition"]
+    if (condition == "obra_nueva"
+            and (nota.get("segment") or {}).get("construction") == "nueva"):
+        condition = "buen_estado"
     val = estimate_market_value(
         surface_m2=surface,
         median_price_eur_per_m2=nota["price_eur_per_m2"],
-        condition=inp["condition"],
+        condition=condition,
         year_built=inp["year_built"],
         zone_avg_surface_m2=nota.get("avg_surface_m2") or 0,
         zone_typical_year=0,

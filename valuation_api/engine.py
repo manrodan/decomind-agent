@@ -54,7 +54,7 @@ from mcp_servers._guardrails import (
 # Versión del MODELO de valoración (lógica/calibraciones, no la API HTTP).
 # Bump manual en cada cambio que altere resultados; queda persistida junto a
 # cada valoración guardada para poder interpretar históricos.
-MODEL_VERSION = "valuation-v2.7.0"
+MODEL_VERSION = "valuation-v2.8.0"
 
 _FLOOR_UNKNOWN = -999
 # Lag efectivo del snapshot del Notariado (ventana de agregación ~12 meses →
@@ -476,6 +476,15 @@ def run_valuation(
                 "source": "ine_ipv",
             }
 
+    # v2.8.0 — doble conteo de obra nueva: si la base del Notariado ya viene
+    # del segmento 'nueva' (más caro de por sí), aplicar además la prima de
+    # estado la contaría DOS veces (matriz de sesgos 2026-07: obra nueva
+    # +18.5%, BCN +32%). Con base segmentada 'nueva' el estado pasa a neutro.
+    hedonic_condition = condition
+    if (condition == "obra_nueva" and nota_price
+            and (nota.get("segment") or {}).get("construction") == "nueva"):
+        hedonic_condition = "buen_estado"
+
     hedonic_kwargs = dict(
         floor=_FLOOR_UNKNOWN if floor is None else floor,
         has_elevator=_tri(has_elevator),
@@ -511,7 +520,7 @@ def run_valuation(
     val = estimate_market_value(
         surface_m2=surface_m2,
         median_price_eur_per_m2=base_price,
-        condition=condition,
+        condition=hedonic_condition,
         year_built=year or 0,
         zone_avg_surface_m2=zone_avg_surface if nota_price else 0,
         zone_typical_year=zone_year or 0,

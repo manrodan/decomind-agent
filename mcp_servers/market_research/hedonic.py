@@ -112,7 +112,11 @@ CONDITION_FACTOR: dict[str, float] = {
     "nuevo": 1.15,
     "reformado": 1.08,
     "buen_estado": 1.00,
-    "a_reformar": 0.82,   # más realista que el 0.75 plano anterior
+    # v2.8.0: 0.82 → 0.90. La matriz de sesgos (idealista18, 2026-07) midió
+    # -8.8% de infravaloración UNIFORME en las 3 ciudades (BCN -9.8 / MAD
+    # -7.0 / VAL -7.8): en capital, el suelo/ubicación conserva el valor
+    # aunque el piso esté por reformar.
+    "a_reformar": 0.90,
     "ruina": 0.60,
 }
 
@@ -170,9 +174,13 @@ def antiquity_factor(year_built: int | None,
         return 1.00
     if age < 70:
         return 0.94
+    # v2.8.0: bandas viejas suavizadas (0.88/0.84 → 0.93/0.90). La matriz de
+    # sesgos midió -5.7% en <1950 (BCN -7.4 / VAL -12.5): la finca clásica
+    # de centro no cotiza con ese descuento — el castigo duro lo pone el
+    # ESTADO, no el año.
     if age < 100:
-        return 0.88
-    return 0.84  # edificios centenarios (salvo rehab integral)
+        return 0.93
+    return 0.90  # edificios centenarios (salvo rehab integral)
 
 
 # ── 7. Distribución: baños y densidad de habitaciones ──────────────────────
