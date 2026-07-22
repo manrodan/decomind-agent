@@ -1,0 +1,432 @@
+{
+  "generated_at": "2026-07-22T14:56:41+00:00",
+  "model_version": "valuation-v2.7.0",
+  "dataset": "idealista18 — sesgo estructural post-escala por tipología",
+  "micro_location": true,
+  "scale_k": {
+    "Madrid": 0.6793,
+    "Barcelona": 0.906,
+    "Valencia": 0.5906
+  },
+  "total_points": 1222,
+  "matrix": {
+    "año 1950-80": {
+      "n": 619,
+      "bias_pct": 2.1,
+      "mdape_pct": 19.5,
+      "by_city": {
+        "Barcelona": {
+          "n": 188,
+          "bias_pct": 3.9,
+          "mdape_pct": 20.0
+        },
+        "Madrid": {
+          "n": 200,
+          "bias_pct": -2.2,
+          "mdape_pct": 18.1
+        },
+        "Valencia": {
+          "n": 231,
+          "bias_pct": 4.6,
+          "mdape_pct": 20.0
+        }
+      }
+    },
+    "año 1980-2005": {
+      "n": 207,
+      "bias_pct": 0.1,
+      "mdape_pct": 17.9,
+      "by_city": {
+        "Barcelona": {
+          "n": 55,
+          "bias_pct": 7.9,
+          "mdape_pct": 18.5
+        },
+        "Madrid": {
+          "n": 63,
+          "bias_pct": -3.4,
+          "mdape_pct": 19.9
+        },
+        "Valencia": {
+          "n": 89,
+          "bias_pct": -4.1,
+          "mdape_pct": 17.4
+        }
+      }
+    },
+    "año <1950": {
+      "n": 302,
+      "bias_pct": -5.7,
+      "mdape_pct": 20.3,
+      "by_city": {
+        "Barcelona": {
+          "n": 149,
+          "bias_pct": -7.4,
+          "mdape_pct": 18.4
+        },
+        "Madrid": {
+          "n": 88,
+          "bias_pct": 0.8,
+          "mdape_pct": 21.5
+        },
+        "Valencia": {
+          "n": 65,
+          "bias_pct": -12.5,
+          "mdape_pct": 21.4
+        }
+      }
+    },
+    "año >2005": {
+      "n": 93,
+      "bias_pct": 1.3,
+      "mdape_pct": 22.2,
+      "by_city": {
+        "Barcelona": {
+          "n": 18,
+          "bias_pct": -2.3,
+          "mdape_pct": 22.0
+        },
+        "Madrid": {
+          "n": 52,
+          "bias_pct": 5.3,
+          "mdape_pct": 19.3
+        },
+        "Valencia": {
+          "n": 23,
+          "bias_pct": -22.1,
+          "mdape_pct": 31.1
+        }
+      }
+    },
+    "con terraza": {
+      "n": 448,
+      "bias_pct": 0.4,
+      "mdape_pct": 19.2,
+      "by_city": {
+        "Barcelona": {
+          "n": 151,
+          "bias_pct": 3.4,
+          "mdape_pct": 20.0
+        },
+        "Madrid": {
+          "n": 179,
+          "bias_pct": -2.2,
+          "mdape_pct": 19.2
+        },
+        "Valencia": {
+          "n": 118,
+          "bias_pct": -2.4,
+          "mdape_pct": 19.2
+        }
+      }
+    },
+    "estado: a reformar": {
+      "n": 275,
+      "bias_pct": -8.8,
+      "mdape_pct": 17.2,
+      "by_city": {
+        "Barcelona": {
+          "n": 90,
+          "bias_pct": -9.8,
+          "mdape_pct": 18.9
+        },
+        "Madrid": {
+          "n": 103,
+          "bias_pct": -7.0,
+          "mdape_pct": 17.2
+        },
+        "Valencia": {
+          "n": 82,
+          "bias_pct": -7.8,
+          "mdape_pct": 16.9
+        }
+      }
+    },
+    "estado: buen estado": {
+      "n": 799,
+      "bias_pct": -0.1,
+      "mdape_pct": 19.7,
+      "by_city": {
+        "Barcelona": {
+          "n": 277,
+          "bias_pct": -0.1,
+          "mdape_pct": 18.4
+        },
+        "Madrid": {
+          "n": 250,
+          "bias_pct": -2.1,
+          "mdape_pct": 19.7
+        },
+        "Valencia": {
+          "n": 272,
+          "bias_pct": 0.6,
+          "mdape_pct": 22.1
+        }
+      }
+    },
+    "estado: obra nueva": {
+      "n": 148,
+      "bias_pct": 18.5,
+      "mdape_pct": 24.5,
+      "by_city": {
+        "Barcelona": {
+          "n": 43,
+          "bias_pct": 32.3,
+          "mdape_pct": 32.5
+        },
+        "Madrid": {
+          "n": 50,
+          "bias_pct": 25.9,
+          "mdape_pct": 25.9
+        },
+        "Valencia": {
+          "n": 55,
+          "bias_pct": 2.6,
+          "mdape_pct": 21.8
+        }
+      }
+    },
+    "garaje incluido": {
+      "n": 210,
+      "bias_pct": -4.1,
+      "mdape_pct": 19.7,
+      "by_city": {
+        "Barcelona": {
+          "n": 28,
+          "bias_pct": -0.4,
+          "mdape_pct": 17.5
+        },
+        "Madrid": {
+          "n": 109,
+          "bias_pct": -0.7,
+          "mdape_pct": 19.7
+        },
+        "Valencia": {
+          "n": 73,
+          "bias_pct": -7.6,
+          "mdape_pct": 21.7
+        }
+      }
+    },
+    "planta baja/1ª": {
+      "n": 322,
+      "bias_pct": 0.9,
+      "mdape_pct": 19.8,
+      "by_city": {
+        "Barcelona": {
+          "n": 132,
+          "bias_pct": 1.2,
+          "mdape_pct": 20.0
+        },
+        "Madrid": {
+          "n": 116,
+          "bias_pct": 1.2,
+          "mdape_pct": 19.5
+        },
+        "Valencia": {
+          "n": 74,
+          "bias_pct": -1.7,
+          "mdape_pct": 19.7
+        }
+      }
+    },
+    "planta ≥3 SIN ascensor": {
+      "n": 140,
+      "bias_pct": -3.8,
+      "mdape_pct": 22.6,
+      "by_city": {
+        "Barcelona": {
+          "n": 36,
+          "bias_pct": -9.2,
+          "mdape_pct": 23.6
+        },
+        "Madrid": {
+          "n": 56,
+          "bias_pct": -5.7,
+          "mdape_pct": 18.2
+        },
+        "Valencia": {
+          "n": 48,
+          "bias_pct": 15.0,
+          "mdape_pct": 33.3
+        }
+      }
+    },
+    "planta ≥3 con ascensor": {
+      "n": 501,
+      "bias_pct": -2.6,
+      "mdape_pct": 17.9,
+      "by_city": {
+        "Barcelona": {
+          "n": 150,
+          "bias_pct": 0.4,
+          "mdape_pct": 14.7
+        },
+        "Madrid": {
+          "n": 147,
+          "bias_pct": -2.3,
+          "mdape_pct": 17.9
+        },
+        "Valencia": {
+          "n": 204,
+          "bias_pct": -5.9,
+          "mdape_pct": 19.8
+        }
+      }
+    },
+    "sin terraza": {
+      "n": 774,
+      "bias_pct": -0.1,
+      "mdape_pct": 19.7,
+      "by_city": {
+        "Barcelona": {
+          "n": 259,
+          "bias_pct": -0.9,
+          "mdape_pct": 18.8
+        },
+        "Madrid": {
+          "n": 224,
+          "bias_pct": 0.8,
+          "mdape_pct": 19.7
+        },
+        "Valencia": {
+          "n": 291,
+          "bias_pct": 0.8,
+          "mdape_pct": 21.8
+        }
+      }
+    },
+    "sup 50-80 m²": {
+      "n": 321,
+      "bias_pct": -0.9,
+      "mdape_pct": 18.1,
+      "by_city": {
+        "Barcelona": {
+          "n": 129,
+          "bias_pct": -0.9,
+          "mdape_pct": 16.9
+        },
+        "Madrid": {
+          "n": 117,
+          "bias_pct": -5.7,
+          "mdape_pct": 15.8
+        },
+        "Valencia": {
+          "n": 75,
+          "bias_pct": 8.4,
+          "mdape_pct": 25.9
+        }
+      }
+    },
+    "sup 80-120 m²": {
+      "n": 433,
+      "bias_pct": 0.1,
+      "mdape_pct": 19.1,
+      "by_city": {
+        "Barcelona": {
+          "n": 153,
+          "bias_pct": -0.1,
+          "mdape_pct": 16.8
+        },
+        "Madrid": {
+          "n": 108,
+          "bias_pct": -6.0,
+          "mdape_pct": 21.7
+        },
+        "Valencia": {
+          "n": 172,
+          "bias_pct": 1.6,
+          "mdape_pct": 19.3
+        }
+      }
+    },
+    "sup <50 m²": {
+      "n": 174,
+      "bias_pct": 5.4,
+      "mdape_pct": 25.6,
+      "by_city": {
+        "Barcelona": {
+          "n": 62,
+          "bias_pct": 2.3,
+          "mdape_pct": 24.7
+        },
+        "Madrid": {
+          "n": 68,
+          "bias_pct": 7.4,
+          "mdape_pct": 26.3
+        },
+        "Valencia": {
+          "n": 44,
+          "bias_pct": 7.9,
+          "mdape_pct": 27.8
+        }
+      }
+    },
+    "sup >120 m²": {
+      "n": 294,
+      "bias_pct": -1.7,
+      "mdape_pct": 18.6,
+      "by_city": {
+        "Barcelona": {
+          "n": 66,
+          "bias_pct": 1.7,
+          "mdape_pct": 20.3
+        },
+        "Madrid": {
+          "n": 110,
+          "bias_pct": 4.1,
+          "mdape_pct": 15.9
+        },
+        "Valencia": {
+          "n": 118,
+          "bias_pct": -7.3,
+          "mdape_pct": 18.5
+        }
+      }
+    },
+    "trastero": {
+      "n": 232,
+      "bias_pct": 1.9,
+      "mdape_pct": 18.5,
+      "by_city": {
+        "Barcelona": {
+          "n": 44,
+          "bias_pct": 10.9,
+          "mdape_pct": 19.3
+        },
+        "Madrid": {
+          "n": 112,
+          "bias_pct": 4.8,
+          "mdape_pct": 17.5
+        },
+        "Valencia": {
+          "n": 76,
+          "bias_pct": -6.4,
+          "mdape_pct": 22.2
+        }
+      }
+    },
+    "ático": {
+      "n": 135,
+      "bias_pct": 3.4,
+      "mdape_pct": 20.7,
+      "by_city": {
+        "Barcelona": {
+          "n": 44,
+          "bias_pct": 10.6,
+          "mdape_pct": 17.4
+        },
+        "Madrid": {
+          "n": 48,
+          "bias_pct": -1.0,
+          "mdape_pct": 21.6
+        },
+        "Valencia": {
+          "n": 43,
+          "bias_pct": -11.6,
+          "mdape_pct": 23.2
+        }
+      }
+    }
+  }
+}
