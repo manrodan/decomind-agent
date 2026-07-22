@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-07-22T07:13:05+00:00",
+  "model_version": "valuation-v2.7.0",
+  "dataset": "idealista18 (asking prices 2018 — backtest estructural, nivel corregido por ciudad)",
+  "micro_location": true,
+  "sample_per_city": 100,
+  "cities": {
+    "Madrid": {
+      "n": 99,
+      "scale_k": 0.6855,
+      "mdape_pct": 18.8,
+      "ppe10_pct": 30.3,
+      "ppe20_pct": 54.5,
+      "skipped": 1,
+      "bias_by_surface_tranche_pct": {
+        "0-50 m2": 18.1,
+        "50-80 m2": 0.0,
+        "80-120 m2": -0.9,
+        "120-+ m2": -3.1
+      }
+    },
+    "Barcelona": {
+      "n": 100,
+      "scale_k": 0.9571,
+      "mdape_pct": 13.5,
+      "ppe10_pct": 45.0,
+      "ppe20_pct": 63.0,
+      "skipped": 0,
+      "bias_by_surface_tranche_pct": {
+        "50-80 m2": -6.1,
+        "80-120 m2": 5.9,
+        "120-+ m2": 3.5
+      }
+    },
+    "Valencia": {
+      "n": 99,
+      "scale_k": 0.6336,
+      "mdape_pct": 17.9,
+      "ppe10_pct": 25.3,
+      "ppe20_pct": 54.5,
+      "skipped": 1,
+      "bias_by_surface_tranche_pct": {
+        "50-80 m2": 1.6,
+        "80-120 m2": 3.0,
+        "120-+ m2": -16.8
+      }
+    }
+  },
+  "global": {
+    "mdape_pct": 17.9,
+    "bias_by_surface_tranche_pct": {
+      "120-+ m2": -3.3,
+      "50-80 m2": -4.0,
+      "80-120 m2": 4.5
+    }
+  }
+}
