@@ -5,4 +5,5 @@ pydantic>=2.5.0
 httpx>=0.27.0
 # mcp_servers/* modules define @mcp.tool()-decorated functions; importing them
 # requires FastMCP even though we call the functions directly (no MCP runtime).
-mcp>=1.0.0
+# <2: mcp 2.x quito mcp.server.fastmcp (el build del 2026-09-30 no arrancaba).
+mcp>=1.0.0,<2
