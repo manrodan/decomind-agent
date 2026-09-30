@@ -21,6 +21,7 @@ Endpoints (HTTP, no HTTPS — el Catastro va mejor en HTTP):
 from __future__ import annotations
 
 import logging
+import time
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -31,8 +32,31 @@ BASE = "http://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC"
 HEADERS = {"User-Agent": "decomind-agent-challenge/0.1 (info@decomind.es)"}
 TIMEOUT = 12.0
 
+# Desde la IP compartida de Cloud Run el Catastro corta conexiones: ~2
+# simultáneas como mucho y, aun en serie, el 25-40 % de las peticiones mueren
+# sin respuesta (logs sep-2026; desde una IP residencial, 0 %). Un reintento
+# tras una pausa breve; los timeouts NO se reintentan (doblarían el peor caso).
+_RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
+RETRY_PAUSE_S = 0.5
+
 logger = logging.getLogger("mcp.catastro")
 mcp = FastMCP("catastro")
+
+
+def catastro_get(url: str, params: dict, timeout: float = TIMEOUT) -> httpx.Response:
+    """GET a ovc.catastro.meh.es con 1 reintento ante cortes de transporte.
+    Lo usan también zona_valor (WMS + ponencia): un solo sitio para el host."""
+    for attempt in (1, 2):
+        try:
+            with httpx.Client(timeout=timeout, headers=HEADERS, follow_redirects=True) as c:
+                r = c.get(url, params=params)
+            r.raise_for_status()
+            return r
+        except _RETRYABLE as exc:
+            if attempt == 2:
+                raise
+            logger.info("Catastro retry (%s): %s", type(exc).__name__, url)
+            time.sleep(RETRY_PAUSE_S)
 
 
 # ── helpers XML (ignoran namespace con wildcard {*}) ───────────────────────
@@ -46,10 +70,7 @@ def _text(node: ET.Element | None, path: str) -> str | None:
 
 def _get_xml(endpoint: str, params: dict) -> ET.Element | None:
     try:
-        with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as c:
-            r = c.get(f"{BASE}/{endpoint}", params=params)
-            r.raise_for_status()
-            return ET.fromstring(r.text)
+        return ET.fromstring(catastro_get(f"{BASE}/{endpoint}", params).text)
     except Exception as exc:
         logger.warning("Catastro %s failed: %s", endpoint, exc)
         return None
@@ -169,12 +190,15 @@ def catastro_lookup(lat: float, lon: float) -> dict[str, Any]:
     # Itera por los inmuebles del edificio hasta encontrar uno con año (y
     # preferiblemente residencial). El primer inmueble puede ser un local sin
     # año; el año es del edificio, así que cualquiera con dato sirve.
-    detail = None
-    first_with_year = None
+    # Un inmueble sin respuesta (ya reintentado) = el Catastro nos está cortando:
+    # no insistir con el resto (cada fallo cuesta 2 intentos; 8 seguidos
+    # reventarían el timeout de 60 s de Cloud Run).
+    detail = first_with_year = first_any = None
     for rc20 in units[:8]:
         d = _unit_detail(rc20)
         if not d:
-            continue
+            break
+        first_any = first_any or d
         if d.get("year_built"):
             if first_with_year is None:
                 first_with_year = d
@@ -183,7 +207,7 @@ def catastro_lookup(lat: float, lon: float) -> dict[str, Any]:
                 detail = d
                 break
     if detail is None:
-        detail = first_with_year or (_unit_detail(units[0]) if units else None)
+        detail = first_with_year or first_any
 
     result: dict[str, Any] = {
         "found": True,

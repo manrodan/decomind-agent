@@ -31,15 +31,15 @@ import logging
 import math
 import re
 import statistics
-from concurrent.futures import ThreadPoolExecutor
+import time
 from typing import Any
 
-import httpx
 from mcp.server.fastmcp import FastMCP
+
+from mcp_servers.catastro.server import catastro_get
 
 WMS = "https://ovc.catastro.meh.es/Cartografia/WMS/PonenciasWMS.aspx"
 PONENCIA = "https://ovc.catastro.meh.es/Cartografia/WMS/ponencia.aspx"
-HEADERS = {"User-Agent": "decomind-agent-challenge/0.1 (info@decomind.es)"}
 TIMEOUT = 15.0
 
 # El índice catastral no mapea 1:1 al mercado: el ratio zona/ámbito se amortigua
@@ -52,6 +52,11 @@ _ELASTICITY = 0.5
 # borde de polígono): 8 puntos por anillo, se queda con la zona más frecuente.
 # 400 m cubre paseos marítimos anchos (1ª línea = donde más valor se pierde).
 _FALLBACK_RADII_M = (80.0, 200.0, 400.0)
+# Tope de tiempo del muestreo de respaldo (va en serie, ver abajo): con el
+# Catastro lento (2-4 s por petición) los 24 puntos pasarían del timeout de
+# 60 s de Cloud Run. Agotado el tope (o al primer corte) se decide con los
+# puntos ya vistos.
+_FALLBACK_BUDGET_S = 8.0
 
 logger = logging.getLogger("mcp.zona_valor")
 mcp = FastMCP("zona_valor")
@@ -68,17 +73,16 @@ def _merc(lon: float, lat: float) -> tuple[float, float]:
             math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * R)
 
 
-def _ponencia_values(delg: str, mun: str) -> dict[str, float]:
-    """{codigo_zona: €/m²} de la ponencia del municipio (cacheado). {} si falla."""
+def _ponencia_values(delg: str, mun: str) -> dict[str, float] | None:
+    """{codigo_zona: €/m²} de la ponencia del municipio (cacheado). None si la
+    descarga falla — sin cachear: un corte puntual no deja al municipio sin zona
+    de valor el resto de la vida de la instancia."""
     key = (delg, mun)
     if key in _PONENCIA_CACHE:
         return _PONENCIA_CACHE[key]
     out: dict[str, float] = {}
     try:
-        with httpx.Client(timeout=40, headers=HEADERS, follow_redirects=True) as c:
-            r = c.get(PONENCIA, params={"del": delg, "mun": mun})
-            r.raise_for_status()
-            text = r.text
+        text = catastro_get(PONENCIA, {"del": delg, "mun": mun}, timeout=40).text
         for code, val in re.findall(
             r'prod_cat2">([^<]+)</td><td class="tddescrip_centrado">\s*([\d.]+)', text
         ):
@@ -88,12 +92,14 @@ def _ponencia_values(delg: str, mun: str) -> dict[str, float]:
                 continue
     except Exception as exc:
         logger.warning("ponencia(%s,%s) failed: %s", delg, mun, exc)
+        return None
     _PONENCIA_CACHE[key] = out
     return out
 
 
 def zona_valor_lookup(lat: float, lon: float) -> dict[str, Any]:
-    """Zona de valor + €/m² catastral del punto. {found: False} si no hay cobertura."""
+    """Zona de valor + €/m² catastral del punto. {found: False} si no hay
+    cobertura; además `error` si el Catastro no respondió (ya reintentado)."""
     x, y = _merc(lon, lat)
     d = 35.0  # bbox ±35 m: el píxel central (50,50) cae sobre el punto
     params = {
@@ -103,13 +109,10 @@ def zona_valor_lookup(lat: float, lon: float) -> dict[str, Any]:
         "X": "50", "Y": "50", "INFO_FORMAT": "text/html", "FEATURE_COUNT": "1",
     }
     try:
-        with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as c:
-            r = c.get(WMS, params=params)
-            r.raise_for_status()
-            text = r.text
+        text = catastro_get(WMS, params, timeout=TIMEOUT).text
     except Exception as exc:
         logger.warning("zona_valor GFI failed: %s", exc)
-        return {"found": False}
+        return {"found": False, "error": True}
     return _parse_gfi(text)
 
 
@@ -123,7 +126,10 @@ def _parse_gfi(text: str) -> dict[str, Any]:
     if not code or not dm or dm[0][1] == "0":
         return {"found": False}
     delg, mun = dm[0]
-    value = _ponencia_values(delg, mun).get(code)
+    values = _ponencia_values(delg, mun)
+    if values is None:
+        return {"found": False, "error": True}
+    value = values.get(code)
     if not value:
         return {"found": False}
     return {"found": True, "code": code, "value": value, "del": delg, "mun": mun}
@@ -155,14 +161,27 @@ def _pick_fallback_zone(hits: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _lookup_with_fallback(lat: float, lon: float) -> dict[str, Any]:
     """Zona del punto; si el píxel exacto no tiene (playa/borde), muestrea anillos
-    de respaldo crecientes y elige con `_pick_fallback_zone`."""
+    de respaldo crecientes y elige con `_pick_fallback_zone`.
+
+    En SERIE y cortando al primer error: el Catastro admite ~2 conexiones
+    simultáneas por IP y el anillo en paralelo (8) perdía el 87 % de las
+    peticiones (logs sep-2026). Si el Catastro no responde, el anillo no se
+    lanza — es para píxeles sin zona, no para un Catastro caído."""
     subj = zona_valor_lookup(lat, lon)
-    if subj.get("found"):
+    if subj.get("found") or subj.get("error"):
         return subj
+    deadline = time.monotonic() + _FALLBACK_BUDGET_S
     for radius in _FALLBACK_RADII_M:
-        pts = _ring_points(lat, lon, radius)
-        with ThreadPoolExecutor(max_workers=len(pts)) as ex:
-            hits = [z for z in ex.map(lambda p: zona_valor_lookup(*p), pts) if z.get("found")]
+        hits = []
+        for p in _ring_points(lat, lon, radius):
+            if time.monotonic() > deadline:
+                break
+            z = zona_valor_lookup(*p)
+            if z.get("error"):
+                deadline = 0.0  # corte (ya reintentado): no insistir
+                break
+            if z.get("found"):
+                hits.append(z)
         if hits:
             z = _pick_fallback_zone(hits)
             z["fallback_m"] = radius
