@@ -26,7 +26,7 @@ import math
 import re
 from typing import Any
 
-from mcp_servers.geocoding.server import geocode_address
+from mcp_servers.geocoding.server import cartociudad_portal, geocode_address
 from mcp_servers.catastro.server import catastro_lookup
 from mcp_servers.notariado.server import notariado_price
 from mcp_servers.market_research.server import (
@@ -100,6 +100,29 @@ def _clean_listing_address(address: str) -> str:
     if len(parts) > 1 and parts[1][:1].isdigit():
         return f"{parts[0]} {parts[1]}"  # "Calle Real, 12" → "Calle Real 12"
     return parts[0] if parts else a
+
+
+# Número de portal al final de la calle ya limpiada: "Calle Mayor 10", "... 10B".
+_PORTAL_NUMBER_RE = re.compile(r"(?:^|[\s,])(\d{1,4})\s*[a-zA-Z]?\s*$")
+
+
+def _portal_point(geo: dict[str, Any], address: str, locality: str,
+                  ) -> tuple[tuple[float, float] | None, int | None]:
+    """((lat, lon) del PORTAL, nº pedido). Nominatim, cuando OSM no tiene el
+    número, devuelve el centro de la calle: preguntar al Catastro por ese punto
+    da el año de OTRO edificio (o una parcela sin viviendas). Solo vale un punto
+    con el número exacto: el de Nominatim si trae house_number, o CartoCiudad."""
+    street = _clean_listing_address(address)
+    m = _PORTAL_NUMBER_RE.search(street)
+    if not m:
+        return None, None
+    number = int(m.group(1))
+    if geo.get("house_number"):
+        return (float(geo["lat"]), float(geo["lon"])), number
+    hit = cartociudad_portal(street, geo.get("municipality") or locality, number)
+    if hit and hit.get("lat") and hit.get("lon"):
+        return (float(hit["lat"]), float(hit["lon"])), number
+    return None, number
 
 
 def _geocode_with_fallback(
@@ -395,10 +418,22 @@ def run_valuation(
                 f"ignorado (precio a nivel de municipio).")
         cp = fallback_cp
 
-    # 2. Catastro (año oficial). Solo con dirección exacta: a nivel zona las
-    # coords son el centro del municipio y devolverían la parcela equivocada.
-    cat = (catastro_lookup(lat, lon)
-           if (lat and lon and precision == "street") else {"found": False})
+    # 2. Catastro (año oficial). Solo con el punto del PORTAL: a nivel zona las
+    # coords son el centro del municipio, y sin portal, el centro de la calle;
+    # en ambos casos darían la parcela (y el año) de otro edificio.
+    portal, number = ((_portal_point(geo, address, locality) if precision == "street"
+                       else (None, None)))
+    if portal:
+        lat, lon = portal  # afina también zona de valor y sección censal
+    elif precision == "street":
+        pre_warnings.append(
+            f"No hemos podido situar el portal nº {number} en la cartografía "
+            f"oficial: el año de construcción no se ha tomado del Catastro. "
+            f"Comprueba que el número de la dirección es correcto."
+            if number else
+            "La dirección no lleva número de portal: el año de construcción no se "
+            "ha tomado del Catastro.")
+    cat = catastro_lookup(lat, lon) if portal else {"found": False}
     official_year = cat.get("year_built")
     year = official_year or year_built or 0
 

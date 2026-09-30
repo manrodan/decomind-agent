@@ -153,8 +153,33 @@ def geocode_address(
         "suburb": addr.get("suburb"),
         "neighbourhood": addr.get("neighbourhood") or addr.get("quarter"),
         "road": addr.get("road"),
+        # Sin número = Nominatim devolvió el CENTRO de la calle (OSM no tiene el portal).
+        "house_number": addr.get("house_number"),
         "display_name": hit.get("display_name"),
     }
+
+
+def cartociudad_portal(address: str, locality: str, number: int) -> dict[str, Any] | None:
+    """Coordenadas del portal `number` según CartoCiudad (IGN), que sí tiene
+    portales donde OSM no. Solo si CartoCiudad devuelve ESE número: su `find`
+    responde con el portal de número más cercano (p.ej. pides el 60 y da el 61,
+    en la otra acera), que no sirve para saber qué edificio es. None si no."""
+    try:
+        resp = httpx.get(
+            "https://www.cartociudad.es/geocoder/api/geocoder/find",
+            params={"q": f"{address}, {locality}"},
+            headers={"User-Agent": NOMINATIM_USER_AGENT},
+            timeout=NOMINATIM_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        hit = resp.json() if resp.text.strip() else {}
+    except Exception as exc:
+        logger.warning("CartoCiudad failed for '%s': %s", address, exc)
+        return None
+    if hit.get("type") != "portal" or hit.get("portalNumber") != number:
+        return None
+    return {"lat": hit.get("lat"), "lon": hit.get("lng"),
+            "cadastral_reference": hit.get("refCatastral")}
 
 
 if __name__ == "__main__":
