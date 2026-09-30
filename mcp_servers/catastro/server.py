@@ -36,8 +36,11 @@ TIMEOUT = 12.0
 # simultáneas como mucho y, aun en serie, el 25-40 % de las peticiones mueren
 # sin respuesta (logs sep-2026; desde una IP residencial, 0 %). Un reintento
 # tras una pausa breve; los timeouts NO se reintentan (doblarían el peor caso).
+# Los cortes vienen en ráfagas de ~0,5-2 s (medido en prod 2026-09-30): con
+# 0,5 s de pausa el reintento salía bien la mitad de las veces; 1,5 s sale de
+# casi todas las ráfagas observadas.
 _RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
-RETRY_PAUSE_S = 0.5
+RETRY_PAUSE_S = 1.5
 
 logger = logging.getLogger("mcp.catastro")
 mcp = FastMCP("catastro")
