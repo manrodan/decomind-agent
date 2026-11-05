@@ -171,6 +171,7 @@ def _lookup_with_fallback(lat: float, lon: float) -> dict[str, Any]:
     if subj.get("found") or subj.get("error"):
         return subj
     deadline = time.monotonic() + _FALLBACK_BUDGET_S
+    cut = False
     for radius in _FALLBACK_RADII_M:
         hits = []
         for p in _ring_points(lat, lon, radius):
@@ -178,7 +179,7 @@ def _lookup_with_fallback(lat: float, lon: float) -> dict[str, Any]:
                 break
             z = zona_valor_lookup(*p)
             if z.get("error"):
-                deadline = 0.0  # corte (ya reintentado): no insistir
+                deadline, cut = 0.0, True  # corte (ya reintentado): no insistir
                 break
             if z.get("found"):
                 hits.append(z)
@@ -186,7 +187,8 @@ def _lookup_with_fallback(lat: float, lon: float) -> dict[str, Any]:
             z = _pick_fallback_zone(hits)
             z["fallback_m"] = radius
             return z
-    return {"found": False}
+    # Con corte, «sin zona» no es «sin cobertura»: el motor lo marca como fuente caída.
+    return {"found": False, "error": True} if cut else {"found": False}
 
 
 def _ambito_median(values: dict[str, float]) -> float | None:
@@ -229,12 +231,12 @@ def zona_valor_gradient(lat: float, lon: float) -> dict[str, Any]:
     """
     subj = _lookup_with_fallback(lat, lon)
     if not subj.get("found"):
-        return {"found": False, "gradient": 1.0}
+        return {"found": False, "gradient": 1.0, **({"error": True} if subj.get("error") else {})}
 
     table = _ponencia_values(subj["del"], subj["mun"])
     baseline = _ambito_median(table)
-    if not baseline:
-        return {"found": False, "gradient": 1.0}
+    if not baseline:  # table None = la descarga de la ponencia falló
+        return {"found": False, "gradient": 1.0, **({"error": True} if table is None else {})}
 
     raw = subj["value"] / baseline
     out = {

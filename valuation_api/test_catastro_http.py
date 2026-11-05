@@ -119,7 +119,8 @@ def test_catastro_caido_no_lanza_el_anillo_ni_cachea_la_ponencia():
         calls.append(req)
         return _drop(req)
     with _catastro(handler):
-        assert zv.zona_valor_gradient(_LAT, _LON)["found"] is False
+        # error=True: el motor lo marca como fuente caída, no como «sin cobertura».
+        assert zv.zona_valor_gradient(_LAT, _LON) == {"found": False, "gradient": 1.0, "error": True}
     assert len(calls) == 2, len(calls)  # sujeto + su reintento; sin anillo
 
     # GFI con zona pero la ponencia se corta → error, y NO queda cacheada vacía.

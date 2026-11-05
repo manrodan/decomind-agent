@@ -62,6 +62,78 @@ _FLOOR_UNKNOWN = -999
 _TREND_LAG_YEARS = 0.75
 # Cota del gradiente de micro-ubicación COMBINADO (ponencia × sección censal).
 _LOCATION_BOUND = 0.30
+_UNIFAM = {"casa", "chalet", "adosado", "pareado", "unifamiliar"}
+
+# Control de calidad (2026-11-05, tras Oliva→Pego y el Notariado caído de
+# Benicàssim): lo que puede mover el precio un 5 % o más no puede faltar ni
+# fallar en silencio. Campo → (lo que se le pide al agente, cuánto mueve el precio
+# en este motor). Lo que mueve menos (orientación, certificado, extras, baños)
+# sigue entrando neutro.
+CRITICAL_FIELDS: dict[str, tuple[str, str]] = {
+    "address": ("Dirección exacta (calle y número)", "hasta ±30 % según la calle"),
+    "postal_code": ("Código postal", "el precio de referencia de la zona"),
+    "property_type": ("Tipo de vivienda (piso o casa)", "hasta un 26 %"),
+    "condition": ("Estado de conservación", "de −10 % a +15 %"),
+    "floor": ("Planta", "de −18 % a +12 %"),
+    "has_elevator": ("Ascensor", "hasta −18 %"),
+    "exterior": ("Exterior o interior", "−10 %"),
+    "year_built": ("Año de construcción (vale aproximado)", "±10 %"),
+}
+# Valor final frente a lo firmado en la zona (Notariado al día): más allá, se
+# pide al agente que revise los datos (no bloquea). ponytail: cota a ojo (el
+# piso de 70 m² de Benicàssim iba +56 % en su informe y +39 % hoy); calibrar con
+# cierres.
+EXTREME_DEVIATION = 0.35
+
+
+def quality_check(*, precision: str | None, postal_code: str, property_type: str,
+                  condition_assumed: bool, floor: int | None, has_elevator: bool | None,
+                  is_attic: bool, exterior: bool | None, year_built: int,
+                  notariado_level: str | None, catastro_down: bool,
+                  value_per_m2: float | None, base_per_m2: float | None) -> dict[str, Any]:
+    """{ok, missing[{field,label,impact}], failed_sources[{source,label,transient}],
+    deviation_pct, extreme}. El Informe y la Valoración no enseñan el valor con
+    `missing` o `failed_sources`; con `extreme` piden revisar. Pura."""
+    missing: list[dict[str, str]] = []
+
+    def need(field: str) -> None:
+        label, impact = CRITICAL_FIELDS[field]
+        missing.append({"field": field, "label": label, "impact": impact})
+
+    ptype = (property_type or "").lower()
+    if precision != "street":
+        need("address")
+    if not postal_code:
+        need("postal_code")
+    if not ptype:
+        need("property_type")
+    if condition_assumed:
+        need("condition")
+    if ptype and ptype not in _UNIFAM and not (is_attic or ptype == "atico"):
+        if floor is None:
+            need("floor")
+        elif floor >= 3 and has_elevator is None:  # bajo-2º: el ascensor no cambia el factor
+            need("has_elevator")
+        if exterior is None:
+            need("exterior")
+    if not year_built:
+        need("year_built")
+
+    failed: list[dict[str, Any]] = []
+    if catastro_down:
+        failed.append({"source": "catastro", "transient": True,
+                       "label": "El Catastro no responde (precio de la calle)"})
+    if notariado_level is None:
+        failed.append({"source": "notariado", "transient": False,
+                       "label": "No hay precio de compraventa del Notariado para esta zona"})
+    elif notariado_level == "provincia":
+        failed.append({"source": "notariado", "transient": False,
+                       "label": "Solo hay precio del Notariado de toda la provincia, no de la zona"})
+
+    dev = (value_per_m2 / base_per_m2 - 1) if value_per_m2 and base_per_m2 else None
+    return {"ok": not missing and not failed, "missing": missing, "failed_sources": failed,
+            "deviation_pct": round(dev * 100, 1) if dev is not None else None,
+            "extreme": dev is not None and abs(dev) > EXTREME_DEVIATION}
 
 
 def _combine_gradients(gradients: list[float | None]) -> float:
@@ -441,7 +513,6 @@ def run_valuation(
     # Segmento del inmueble para pedir el precio de SIMILARES (no el agregado de
     # todas las viviendas). OPT-IN: sin property_type → sin segmento → mismo
     # comportamiento histórico (importante: el Dossier ROI no pasa tipo).
-    _UNIFAM = {"casa", "chalet", "adosado", "pareado", "unifamiliar"}
     if property_type:
         property_class = "unifamiliar" if property_type.lower() in _UNIFAM else "piso"
         construction = "nueva" if condition == "obra_nueva" else "usada"
@@ -586,11 +657,13 @@ def run_valuation(
     # siendo el €/m² de zona). No-op donde no hay cobertura de ninguna.
     value_per_m2 = val.get("value_eur_per_m2")
     location_adjustment: dict[str, Any] = {"applied": False}
+    catastro_caido = False  # la zona de valor no respondió (≠ sin cobertura)
     if precision == "street" and lat and lon and value_per_m2:
         try:
             grad = zona_valor_gradient(lat=lat, lon=lon)
         except Exception:
-            grad = {"found": False, "gradient": 1.0}
+            grad = {"found": False, "gradient": 1.0, "error": True}
+        catastro_caido = bool(grad.get("error"))
         try:
             sec = seccion_signal_gradient(
                 lat=lat, lon=lon,
@@ -671,6 +744,14 @@ def run_valuation(
             "zona (sin año oficial del Catastro). Indica calle y número "
             "reales para afinar.")
 
+    quality = quality_check(
+        precision=precision, postal_code=cp, property_type=property_type,
+        condition_assumed=condition_assumed, floor=floor, has_elevator=has_elevator,
+        is_attic=is_attic, exterior=exterior, year_built=year,
+        notariado_level=nota.get("level") if nota.get("found") else None,
+        catastro_down=catastro_caido, value_per_m2=value_per_m2,
+        base_per_m2=val.get("base_eur_per_m2"))
+
     result: dict[str, Any] = {
         "found": True,
         "model_version": MODEL_VERSION,
@@ -700,6 +781,7 @@ def run_valuation(
             "assumed_neutral_fields": assumed,
             "warnings": warnings,
             "requires_review": val.get("requires_review", False),
+            "quality": quality,
         },
         # Inputs finales usados (tras anuncio + Catastro) — auditable en UI.
         "property_inputs": {
