@@ -75,6 +75,21 @@ def _pick_real_province(addr: dict) -> str | None:
     # nada limpio → devolvemos lo más informativo aunque sea CCAA
     return addr.get("province") or addr.get("state")
 
+def _municipality(addr: dict) -> str | None:
+    return (addr.get("city") or addr.get("town") or addr.get("village")
+            or addr.get("municipality") or addr.get("hamlet"))
+
+
+def _pick_hit(data: list[dict], locality: str) -> dict:
+    """El primer resultado que cae DENTRO del municipio pedido. Si ninguno
+    (nombre bilingüe, pedanía, sin localidad), el primero, como antes."""
+    want = {_strip_diacritics(x) for x in (locality or "").split("/") if x.strip()}
+    for h in data:
+        if _strip_diacritics(_municipality(h.get("address") or {}) or "") in want:
+            return h
+    return data[0]
+
+
 mcp = FastMCP("geocoding")
 
 
@@ -100,15 +115,15 @@ def geocode_address(
     if not address or not address.strip():
         return {"found": False, "reason": "empty_address"}
 
-    query_parts = [address.strip()]
-    if postal_code:
-        query_parts.append(postal_code.strip())
-    if locality:
-        query_parts.append(locality.strip())
-    if province and province != locality:
-        query_parts.append(province.strip())
-    query_parts.append("España")
-    query = ", ".join(p for p in query_parts if p)
+    # Sin repetir partes: "Oliva, Oliva, España" (zona = localidad) hacía que
+    # Nominatim devolviera el Parc Natural de la Marjal Pego-Oliva, en Pego
+    # (Alicante), y se valoraba con el Notariado y el MIVAU de otro pueblo.
+    query_parts: list[str] = []
+    for part in (address, postal_code, locality, province, "España"):
+        part = (part or "").strip()
+        if part and _strip_diacritics(part) not in {_strip_diacritics(p) for p in query_parts}:
+            query_parts.append(part)
+    query = ", ".join(query_parts)
 
     try:
         with httpx.Client(timeout=NOMINATIM_TIMEOUT_SECONDS) as client:
@@ -118,7 +133,7 @@ def geocode_address(
                     "q": query,
                     "format": "jsonv2",
                     "addressdetails": 1,
-                    "limit": 1,
+                    "limit": 5,
                     "countrycodes": "es",
                     "accept-language": "es",
                 },
@@ -133,17 +148,14 @@ def geocode_address(
     if not data:
         return {"found": False, "reason": "no_results", "query": query}
 
-    hit = data[0]
+    hit = _pick_hit(data, locality)
     addr = hit.get("address") or {}
     return {
         "found": True,
         "lat": hit.get("lat"),
         "lon": hit.get("lon"),
         # Administrativos (los que importan para lookups MITMA/curado)
-        "municipality": (
-            addr.get("city") or addr.get("town") or addr.get("village")
-            or addr.get("municipality") or addr.get("hamlet")
-        ),
+        "municipality": _municipality(addr),
         "province": _pick_real_province(addr),
         "autonomous_community": addr.get("state"),  # CCAA (informativo)
         "postcode": addr.get("postcode"),
