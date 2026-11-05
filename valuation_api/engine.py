@@ -54,7 +54,7 @@ from mcp_servers._guardrails import (
 # Versión del MODELO de valoración (lógica/calibraciones, no la API HTTP).
 # Bump manual en cada cambio que altere resultados; queda persistida junto a
 # cada valoración guardada para poder interpretar históricos.
-MODEL_VERSION = "valuation-v2.8.0"
+MODEL_VERSION = "valuation-v2.8.1"  # 2026-11-05: control de calidad + MIVAU provincial fuera del rango
 
 _FLOOR_UNKNOWN = -999
 # Lag efectivo del snapshot del Notariado (ventana de agregación ~12 meses →
@@ -531,6 +531,13 @@ def run_valuation(
     )
     mitma_price = (comps.get("median_price_eur_per_m2")
                    if comps.get("data_source") != "fallback" else None)
+    # El MIVAU solo publica municipios de más de 25.000 habitantes: por debajo el dato
+    # es la media de la provincia (capital incluida) y no sirve de contraste local.
+    # Compararlo con el Notariado del CP ensanchaba el rango hasta el tope y bajaba la
+    # evidencia (Bellreguard 2026-11-05: 820 frente a 2.047 provincial → ±25 %).
+    mitma_local = comps.get("data_source") == "mitma_municipal"
+    # Sin Notariado el MIVAU es la propia base (el control de calidad lo para): como antes.
+    mitma_contrast = mitma_price if (mitma_local or not nota_price) else None
 
     # 5. Precio base: Notariado preferente, MITMA fallback. Sin NINGUNA fuente
     # oficial NO se inventa un €/m² (antes: 1800 fijo → cifra plausible pero
@@ -702,7 +709,7 @@ def run_valuation(
     signals_agree = (abs(comps_pcts[0] - comps_pcts[1]) <= 8.0
                      if len(comps_pcts) == 2 else None)
     interval, band_half = confidence_band(
-        value_per_m2, surface_m2, nota_price, mitma_price,
+        value_per_m2, surface_m2, nota_price, mitma_contrast,
         base=info_dispersion(
             num_transactions=(nota.get("num_transactions") or 0) if nota.get("found") else 0,
             location_signals_agree=signals_agree,
@@ -714,7 +721,7 @@ def run_valuation(
             (interval, current_value)
 
     # 7. Triangulación de fuentes (convergencia + flag revisión)
-    agreement = check_source_agreement(nota_price or 0, mitma_price or 0)
+    agreement = check_source_agreement(nota_price or 0, mitma_contrast or 0)
 
     # 7b. Confianza de la valoración: un único veredicto (Alta/Media/Baja), no
     # campos crudos sueltos. El frontend lo muestra como sello junto al precio.
@@ -815,6 +822,8 @@ def run_valuation(
             } if nota.get("found") else None,
             "mitma": {
                 "price_eur_per_m2": mitma_price,
+                # «provincia»: media provincial (municipio < 25.000 hab.), no contrasta el rango
+                "scope": "municipio" if mitma_local else "provincia",
                 "data_source": comps.get("data_source"),
                 "data_as_of": MITMA_QUARTER,
             },
