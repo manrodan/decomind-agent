@@ -538,6 +538,18 @@ def run_valuation(
     mitma_local = comps.get("data_source") == "mitma_municipal"
     # Sin Notariado el MIVAU es la propia base (el control de calidad lo para): como antes.
     mitma_contrast = mitma_price if (mitma_local or not nota_price) else None
+    # Y el MIVAU es de TODAS las viviendas: se contrasta con el Notariado de todas (mismo
+    # CP/municipio), no con el del segmento, o el rango mediría la diferencia casa/piso y no
+    # la incertidumbre (Oliva 2026-11-05: casas 1.105, todas 1.446, MIVAU 1.662 → ±25 %).
+    nota_contrast = nota_price
+    seg = nota.get("segment") or {}
+    if nota_price and mitma_local and (seg.get("class"), seg.get("construction")) != ("todas", "todas"):
+        try:
+            todas = notariado_price(postal_code=cp, municipality=muni, province=prov)
+        except Exception:  # sin el agregado, se contrasta con el segmento como antes
+            todas = {}
+        if todas.get("found") and todas.get("level") in ("codigo_postal", "municipio"):
+            nota_contrast = todas.get("price_eur_per_m2") or nota_price
 
     # 5. Precio base: Notariado preferente, MITMA fallback. Sin NINGUNA fuente
     # oficial NO se inventa un €/m² (antes: 1800 fijo → cifra plausible pero
@@ -709,7 +721,7 @@ def run_valuation(
     signals_agree = (abs(comps_pcts[0] - comps_pcts[1]) <= 8.0
                      if len(comps_pcts) == 2 else None)
     interval, band_half = confidence_band(
-        value_per_m2, surface_m2, nota_price, mitma_contrast,
+        value_per_m2, surface_m2, nota_contrast, mitma_contrast,
         base=info_dispersion(
             num_transactions=(nota.get("num_transactions") or 0) if nota.get("found") else 0,
             location_signals_agree=signals_agree,
@@ -721,7 +733,11 @@ def run_valuation(
             (interval, current_value)
 
     # 7. Triangulación de fuentes (convergencia + flag revisión)
-    agreement = check_source_agreement(nota_price or 0, mitma_contrast or 0)
+    agreement = check_source_agreement(nota_contrast or 0, mitma_contrast or 0)
+    if nota_contrast and mitma_contrast:
+        # Lo que se ha comparado (el informe lo explica: si es «todas», no son las cifras de arriba)
+        agreement["compared"] = {"notariado_eur_m2": round(nota_contrast), "mitma_eur_m2": round(mitma_contrast),
+                                 "todas": nota_contrast != nota_price}
 
     # 7b. Confianza de la valoración: un único veredicto (Alta/Media/Baja), no
     # campos crudos sueltos. El frontend lo muestra como sello junto al precio.
