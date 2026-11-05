@@ -21,6 +21,7 @@ en producción conviene confirmar términos con el Consejo General del Notariado
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -88,15 +89,33 @@ def _query(layer: int, where: str, out_fields: str) -> list[dict[str, Any]]:
         "returnGeometry": "false",
         "resultRecordCount": 5,
     }
-    try:
-        with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as c:
-            r = c.get(f"{ARCGIS}/{layer}/query", params=params)
-            r.raise_for_status()
-            data = r.json()
-        return [f.get("attributes", {}) for f in data.get("features", [])]
-    except Exception as exc:
-        logger.warning("Notariado layer %s query failed: %s", layer, exc)
-        return []
+    # ArcGIS responde 200 con {"error": …} cuando falla: antes eso se leía como «sin
+    # datos» y la valoración salía solo con la tasación del MIVAU (Benicàssim,
+    # 2026-11-02: 1.690 €/m² con 2.922 firmados). Un reintento; si sigue, [].
+    for intento in (1, 2):
+        try:
+            with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as c:
+                r = c.get(f"{ARCGIS}/{layer}/query", params=params)
+                r.raise_for_status()
+                data = r.json()
+            if "error" in data:
+                raise RuntimeError(f"ArcGIS error: {data['error']}")
+            return [f.get("attributes", {}) for f in data.get("features", [])]
+        except Exception as exc:
+            logger.warning("Notariado layer %s query failed (intento %d): %s", layer, intento, exc)
+            if intento == 1:
+                time.sleep(1.0)
+    return []
+
+
+class NotariadoUnavailable(RuntimeError):
+    """El servicio del Notariado no responde: valorar sin él daría solo la tasación."""
+
+
+def _service_up() -> bool:
+    """Consulta testigo: la provincia de Madrid siempre tiene compraventas."""
+    return bool(_query(2, f"name_prov='Madrid' AND tipo_construccion_id={_AGG} "
+                          f"AND clase_finca_urbana_id={_AGG}", "total"))
 
 
 def _pack(attrs: dict, level: str, geo_label: str,
@@ -252,6 +271,9 @@ def notariado_price(
             r["low_sample"] = True
             return r
 
+    # Nada en ningún nivel: o la zona no tiene datos, o el servicio está caído.
+    if not _service_up():
+        raise NotariadoUnavailable("el Notariado no responde (consulta testigo vacía)")
     return {"found": False, "reason": "no_data_any_level"}
 
 
