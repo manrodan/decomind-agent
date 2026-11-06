@@ -57,6 +57,8 @@ class ValuationRequest(BaseModel):
     locality: str = ""
     province: str = ""
     postal_code: str = ""
+    # Opcional: con ella el Catastro sitúa el edificio aunque la calle no se encuentre.
+    cadastral_reference: str = Field("", max_length=30)
     # 0 = derivar de `features` si es posible (el motor valida que exista).
     surface_m2: float = Field(0, ge=0)
     # "" = desconocido: se toma de `features` o se asume 'buen_estado'
@@ -131,6 +133,7 @@ async def valuate(
             locality=req.locality,
             province=req.province,
             postal_code=req.postal_code,
+            cadastral_reference=req.cadastral_reference,
             surface_m2=req.surface_m2,
             condition=req.condition,
             property_type=req.property_type,

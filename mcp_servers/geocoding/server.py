@@ -172,6 +172,35 @@ def geocode_address(
     }
 
 
+def reverse_geocode(lat: float, lon: float) -> dict[str, Any]:
+    """Municipio, provincia y CP de un punto (Nominatim /reverse), con la forma de
+    geocode_address. Para el punto que da la referencia catastral. {found: False} si no."""
+    try:
+        with httpx.Client(timeout=NOMINATIM_TIMEOUT_SECONDS) as client:
+            resp = client.get(
+                f"{NOMINATIM_BASE_URL}/reverse",
+                params={"lat": lat, "lon": lon, "format": "jsonv2", "addressdetails": 1,
+                        "zoom": 18, "accept-language": "es"},
+                headers={"User-Agent": NOMINATIM_USER_AGENT},
+            )
+            resp.raise_for_status()
+            hit = resp.json()
+    except Exception as exc:
+        logger.warning("Nominatim reverse failed for %s,%s: %s", lat, lon, exc)
+        return {"found": False}
+    addr = (hit or {}).get("address") or {}
+    if not addr:
+        return {"found": False}
+    return {
+        "found": True, "lat": str(lat), "lon": str(lon),
+        "municipality": _municipality(addr), "province": _pick_real_province(addr),
+        "postcode": addr.get("postcode"), "road": addr.get("road"),
+        "city_district": addr.get("city_district") or addr.get("district"),
+        "suburb": addr.get("suburb"), "house_number": addr.get("house_number"),
+        "display_name": hit.get("display_name"),
+    }
+
+
 def _cartociudad_candidates(address: str, locality: str) -> list[dict]:
     """Candidatos de CartoCiudad (IGN) para «calle número, localidad». [] si falla."""
     try:

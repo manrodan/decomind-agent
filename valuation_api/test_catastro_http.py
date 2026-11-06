@@ -135,6 +135,34 @@ def test_catastro_caido_no_lanza_el_anillo_ni_cachea_la_ponencia():
     assert ("12", "135") not in zv._PONENCIA_CACHE
 
 
+_CPMRC_OK = ("<consulta_coordenadas xmlns=\"http://www.catastro.meh.es/\"><control><cucoor>1</cucoor>"
+             "<cuerr>0</cuerr></control><coordenadas><coord><pc><pc1>0782001</pc1><pc2>BE5308S</pc2></pc>"
+             "<geo><xcen>0.0771050567509312</xcen><ycen>40.0554124346474</ycen><srs>EPSG:4326</srs></geo>"
+             "<ldt>CL BISBE SERRA 5 BENICASIM / BENICASSIM (CASTELLÓN)</ldt></coord></coordenadas>"
+             "</consulta_coordenadas>")
+_CPMRC_ERR = ("<consulta_coordenadas xmlns=\"http://www.catastro.meh.es/\"><control><cuerr>1</cuerr></control>"
+              "<lerr><err><cod>1</cod><des>LA REFERENCIA CATASTRAL NO EXISTE</des></err></lerr>"
+              "</consulta_coordenadas>")
+
+
+def test_referencia_catastral_da_el_punto():
+    # Bisbe Serra 5 (Benicàssim): la de 20 caracteres vale (se usan los 14 de la parcela).
+    seen = []
+
+    def ok(req):
+        seen.append(req.url.params.get("RC"))
+        return httpx.Response(200, text=_CPMRC_OK)
+    with _catastro(ok):
+        r = cat.catastro_rc_point("0782001 BE5308S 0012 XY")
+    assert r["found"] and round(r["lat"], 4) == 40.0554 and round(r["lon"], 4) == 0.0771, r
+    assert seen == ["0782001BE5308S"], seen
+    with _catastro(lambda req: httpx.Response(200, text=_CPMRC_ERR)):
+        assert cat.catastro_rc_point("0782001XX9999Z") == {"found": False}   # mal copiada
+    with _catastro(_drop):
+        assert cat.catastro_rc_point("0782001BE5308S") == {"found": False, "error": True}  # caído
+    assert cat.catastro_rc_point("123") == {"found": False}  # demasiado corta: ni se consulta
+
+
 if __name__ == "__main__":
     checks = [v for k, v in sorted(globals().items())
               if k.startswith("test_") and callable(v)]

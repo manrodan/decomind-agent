@@ -26,8 +26,8 @@ import math
 import re
 from typing import Any
 
-from mcp_servers.geocoding.server import cartociudad_portal, cartociudad_street, geocode_address
-from mcp_servers.catastro.server import catastro_lookup
+from mcp_servers.geocoding.server import cartociudad_portal, cartociudad_street, geocode_address, reverse_geocode
+from mcp_servers.catastro.server import catastro_lookup, catastro_rc_point
 from mcp_servers.notariado.server import notariado_price
 from mcp_servers.market_research.server import (
     find_comparables,
@@ -392,6 +392,7 @@ def run_valuation(
     surface_m2: float = 0,
     condition: str = "",
     property_type: str = "",
+    cadastral_reference: str = "",
     year_built: int = 0,
     floor: int | None = None,
     has_elevator: bool | None = None,
@@ -487,6 +488,29 @@ def run_valuation(
     # 1. Geocoding (con fallback: título de anuncio limpiado → sin provincia
     # → nivel zona)
     geo, precision = _geocode_with_fallback(address, locality, province, user_cp)
+
+    # 1b. Referencia catastral (opcional): el Catastro da el punto del edificio aunque
+    # la calle no se encuentre (calles en valenciano, urbanizaciones, partidas), y con él
+    # el ajuste por calle y el año. Si la calle no se localizó, municipio y CP salen
+    # del punto (Nominatim reverse).
+    rc_point: tuple[float, float] | None = None
+    rc_down = False
+    if (cadastral_reference or "").strip():
+        rcp = catastro_rc_point(cadastral_reference)
+        if rcp.get("found"):
+            rc_point = (rcp["lat"], rcp["lon"])
+            if not geo.get("found") or precision != "street":
+                rev = reverse_geocode(*rc_point)
+                geo = ({**rev, "province": rev.get("province") or province} if rev.get("found")
+                       else {**geo, "postcode": None})  # sin reverse, el CP del centro del pueblo no vale
+            if geo.get("found"):
+                precision = "street"
+        elif rcp.get("error"):
+            rc_down = True  # el control de calidad lo trata como Catastro caído (reintentar)
+        else:
+            pre_warnings.append(
+                "No hemos encontrado esa referencia catastral en el Catastro: revisa que esté "
+                "bien copiada (14 o 20 caracteres). Se ha valorado con la dirección.")
     if not geo.get("found"):
         return {"found": False, "reason": "address_not_found", "input_address": address}
 
@@ -521,8 +545,11 @@ def run_valuation(
     # 2. Catastro (año oficial). Solo con el punto del PORTAL: a nivel zona las
     # coords son el centro del municipio, y sin portal, el centro de la calle;
     # en ambos casos darían la parcela (y el año) de otro edificio.
-    portal, number = ((_portal_point(geo, address, locality) if precision == "street"
-                       else (None, None)))
+    if rc_point:  # el edificio exacto, del propio Catastro
+        portal, number = rc_point, None
+    else:
+        portal, number = ((_portal_point(geo, address, locality) if precision == "street"
+                           else (None, None)))
     if portal:
         lat, lon = portal  # afina también zona de valor y sección censal
     elif precision == "street":
@@ -791,16 +818,16 @@ def run_valuation(
     warnings = pre_warnings + list(val.get("warnings", []))
     if precision == "locality":
         warnings.append(
-            "Dirección no localizada con exactitud: valoración a nivel de "
-            "zona (sin año oficial del Catastro). Indica calle y número "
-            "reales para afinar.")
+            "No hemos localizado la calle en el mapa: la valoración es a nivel de zona, sin "
+            "el ajuste por calle (que mueve el precio hasta un ±30 %) ni el año del Catastro. "
+            "Pega la referencia catastral de la vivienda y vuelve a valorar para afinarla.")
 
     quality = quality_check(
         precision=precision, postal_code=cp, property_type=property_type,
         condition_assumed=condition_assumed, floor=floor, has_elevator=has_elevator,
         is_attic=is_attic, exterior=exterior, year_built=year,
         notariado_level=nota.get("level") if nota.get("found") else None,
-        catastro_down=catastro_caido, value_per_m2=value_per_m2,
+        catastro_down=catastro_caido or rc_down, value_per_m2=value_per_m2,
         base_per_m2=val.get("base_eur_per_m2"), address_given=street_given(address))
 
     result: dict[str, Any] = {

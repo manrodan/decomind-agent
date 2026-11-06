@@ -21,6 +21,7 @@ Endpoints (HTTP, no HTTPS — el Catastro va mejor en HTTP):
 from __future__ import annotations
 
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -154,6 +155,28 @@ def _unit_detail(rc20: str) -> dict[str, Any] | None:
         "year_built": int(ant) if ant and ant.isdigit() else None,
         "address_full": _text(bi, "{*}ldt"),
     }
+
+
+def catastro_rc_point(cadastral_reference: str) -> dict[str, Any]:
+    """Punto del edificio de una referencia catastral (Consulta_CPMRC, vale la de la
+    parcela: 14 primeros caracteres de la de 20). Para cuando la calle no se encuentra
+    (calles en valenciano, urbanizaciones, partidas). {found, lat, lon, address} ·
+    {found: False, error: True} si el Catastro no responde · {found: False} si no existe."""
+    rc = re.sub(r"[^0-9A-Za-z]", "", cadastral_reference or "").upper()
+    if len(rc) < 14:
+        return {"found": False}
+    root = _get_xml("OVCCoordenadas.asmx/Consulta_CPMRC",
+                    {"Provincia": "", "Municipio": "", "SRS": "EPSG:4326", "RC": rc[:14]})
+    if root is None:
+        return {"found": False, "error": True}
+    if _has_error(root):
+        return {"found": False}
+    geo = root.find(".//{*}coord/{*}geo")
+    try:
+        lat, lon = float(_text(geo, "{*}ycen")), float(_text(geo, "{*}xcen"))
+    except (TypeError, ValueError):
+        return {"found": False}
+    return {"found": True, "lat": lat, "lon": lon, "address": _text(root, ".//{*}coord/{*}ldt")}
 
 
 # ── tools ──────────────────────────────────────────────────────────────────
