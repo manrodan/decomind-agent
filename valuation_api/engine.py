@@ -473,6 +473,10 @@ def run_valuation(
 
     condition_assumed = not condition
     condition = condition or "buen_estado"
+    # Casas: sin planta, ascensor, exterior ni ático, aunque los traiga el anuncio («planta 3» de un chalet
+    # adosado de Benicassim Golf: se le aplicaba el −10 % de un 3º sin ascensor; 2026-11-06).
+    if (property_type or "").lower() in _UNIFAM:
+        floor, has_elevator, is_attic, exterior = None, None, False, None
 
     # 0b. Coherencia CP ↔ provincia ANTES de geocodificar: un CP de otra
     # provincia contamina la query y, peor, llevaría al Notariado a devolver
@@ -793,6 +797,12 @@ def run_valuation(
         # Lo que se ha comparado (el informe lo explica: si es «todas», no son las cifras de arriba)
         agreement["compared"] = {"notariado_eur_m2": round(nota_contrast), "mitma_eur_m2": round(mitma_contrast),
                                  "todas": nota_contrast != nota_price}
+    elif nota_price and not mitma_local and agreement.get("agreement") == "single_source":
+        # Que no parezca que falta algo: el MIVAU no publica municipios de menos de 25.000 habitantes.
+        agreement["note"] = (
+            "El Ministerio de Vivienda no publica tasaciones de este municipio (solo de los de más de "
+            f"25.000 habitantes): el precio se apoya en {nota.get('num_transactions') or 'las'} "
+            "compraventas reales firmadas ante notario.")
 
     # 7b. Confianza de la valoración: un único veredicto (Alta/Media/Baja), no
     # campos crudos sueltos. El frontend lo muestra como sello junto al precio.
