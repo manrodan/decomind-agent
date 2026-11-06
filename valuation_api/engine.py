@@ -26,7 +26,7 @@ import math
 import re
 from typing import Any
 
-from mcp_servers.geocoding.server import cartociudad_portal, geocode_address
+from mcp_servers.geocoding.server import cartociudad_portal, cartociudad_street, geocode_address
 from mcp_servers.catastro.server import catastro_lookup
 from mcp_servers.notariado.server import notariado_price
 from mcp_servers.market_research.server import (
@@ -86,11 +86,26 @@ CRITICAL_FIELDS: dict[str, tuple[str, str]] = {
 EXTREME_DEVIATION = 0.35
 
 
+_STREET_WORD_RE = re.compile(
+    r"\b(calle|c/|cl|avenida|avda|av|avinguda|plaza|pza|pl|pla[çc]a|carrer|camino|cam[ií]|paseo|"
+    r"passeig|ronda|traves[ií]a|travessera|urbanizaci[oó]n|urb|partida|pda|carretera|ctra|"
+    r"callej[oó]n|glorieta|pasaje|passatge|v[ií]a|plazuela|cuesta|barrio|grupo)\b", re.I)
+
+
+def street_given(address: str) -> bool:
+    """¿El agente ha escrito una calle (número o tipo de vía)? «Calle Formentera 12» sí;
+    «Oliva pueblo» (título de anuncio) no. Si es una calle y aun así no se localiza, no se
+    vuelve a pedir: el agente no puede hacer más (callejón sin salida, Laura 2026-11-06)."""
+    a = _clean_listing_address(address or "")
+    return bool(re.search(r"\d", a) or _STREET_WORD_RE.search(a))
+
+
 def quality_check(*, precision: str | None, postal_code: str, property_type: str,
                   condition_assumed: bool, floor: int | None, has_elevator: bool | None,
                   is_attic: bool, exterior: bool | None, year_built: int,
                   notariado_level: str | None, catastro_down: bool,
-                  value_per_m2: float | None, base_per_m2: float | None) -> dict[str, Any]:
+                  value_per_m2: float | None, base_per_m2: float | None,
+                  address_given: bool = False) -> dict[str, Any]:
     """{ok, missing[{field,label,impact}], failed_sources[{source,label,transient}],
     deviation_pct, extreme}. El Informe y la Valoración no enseñan el valor con
     `missing` o `failed_sources`; con `extreme` piden revisar. Pura."""
@@ -101,7 +116,9 @@ def quality_check(*, precision: str | None, postal_code: str, property_type: str
         missing.append({"field": field, "label": label, "impact": impact})
 
     ptype = (property_type or "").lower()
-    if precision != "street":
+    # Calle escrita pero no localizada (ni en OSM ni en CartoCiudad): se valora a nivel de
+    # zona con su aviso, como antes; pedirla otra vez no lleva a ninguna parte.
+    if precision != "street" and not address_given:
         need("address")
     if not postal_code:
         need("postal_code")
@@ -226,7 +243,18 @@ def _geocode_with_fallback(
         attempts.append((zone, "", "", "locality"))
 
     seen: set[tuple[str, str, str]] = set()
+    tried_carto = False
     for addr, prov, pc, precision in attempts:
+        # Antes de bajar a nivel zona: el callejero oficial (CartoCiudad). OSM tiene
+        # las calles de la Comunitat en valenciano y el agente las escribe en
+        # castellano («Calle Mayor 3, Oliva» = Carrer Major): Nominatim no las
+        # encuentra y el control de calidad pedía una dirección que ya estaba bien
+        # escrita (Laura, 2026-11-06).
+        if precision == "locality" and not tried_carto and best and locality:
+            tried_carto = True
+            geo = cartociudad_street(best, locality, cp)
+            if geo:
+                return {**geo, "province": province or None}, "street"
         key = (addr, prov, pc)
         if not addr or key in seen:
             continue
@@ -773,7 +801,7 @@ def run_valuation(
         is_attic=is_attic, exterior=exterior, year_built=year,
         notariado_level=nota.get("level") if nota.get("found") else None,
         catastro_down=catastro_caido, value_per_m2=value_per_m2,
-        base_per_m2=val.get("base_eur_per_m2"))
+        base_per_m2=val.get("base_eur_per_m2"), address_given=street_given(address))
 
     result: dict[str, Any] = {
         "found": True,

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -171,27 +172,72 @@ def geocode_address(
     }
 
 
-def cartociudad_portal(address: str, locality: str, number: int) -> dict[str, Any] | None:
-    """Coordenadas del portal `number` según CartoCiudad (IGN), que sí tiene
-    portales donde OSM no. Solo si CartoCiudad devuelve ESE número: su `find`
-    responde con el portal de número más cercano (p.ej. pides el 60 y da el 61,
-    en la otra acera), que no sirve para saber qué edificio es. None si no."""
+def _cartociudad_candidates(address: str, locality: str) -> list[dict]:
+    """Candidatos de CartoCiudad (IGN) para «calle número, localidad». [] si falla."""
     try:
         resp = httpx.get(
-            "https://www.cartociudad.es/geocoder/api/geocoder/find",
-            params={"q": f"{address}, {locality}"},
+            "https://www.cartociudad.es/geocoder/api/geocoder/candidates",
+            params={"q": f"{address}, {locality}", "limit": 10},
             headers={"User-Agent": NOMINATIM_USER_AGENT},
             timeout=NOMINATIM_TIMEOUT_SECONDS,
         )
         resp.raise_for_status()
-        hit = resp.json() if resp.text.strip() else {}
+        data = resp.json() if resp.text.strip() else []
     except Exception as exc:
         logger.warning("CartoCiudad failed for '%s': %s", address, exc)
-        return None
-    if hit.get("type") != "portal" or hit.get("portalNumber") != number:
-        return None
-    return {"lat": hit.get("lat"), "lon": hit.get("lng"),
-            "cadastral_reference": hit.get("refCatastral")}
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _in_place(c: dict, locality: str, postal_code: str) -> bool:
+    """¿El candidato es del municipio pedido (nombre bilingüe «A/B» vale) o de su CP?
+    Su `find` devuelve a veces otra provincia (Mont-roig del Camp por Bellreguard)."""
+    if postal_code and str(c.get("postalCode") or "") == postal_code.strip():
+        return True
+    want = {_strip_diacritics(x) for x in (locality or "").split("/") if x.strip()}
+    have = {_strip_diacritics(x) for x in str(c.get("muni") or "").split("/") if x.strip()}
+    return bool(want & have)
+
+
+def cartociudad_street(address: str, locality: str, postal_code: str = "") -> dict[str, Any] | None:
+    """La calle según CartoCiudad cuando Nominatim no la encuentra: su callejero
+    oficial entiende la calle en castellano aunque OSM la tenga en valenciano o
+    catalán («Calle Mayor 3, Oliva» → Carrer Major; «Calle Formentera,
+    Bellreguard» → Carrer de Formentera). Solo un portal o calle del municipio
+    pedido o de su CP. Misma forma que geocode_address (house_number solo si es
+    ESE portal). None si no."""
+    m = re.search(r"(\d{1,4})\s*[a-zA-Z]?\s*$", (address or "").strip())
+    number = int(m.group(1)) if m else None
+    for c in _cartociudad_candidates(address, locality):
+        if c.get("type") not in ("portal", "callejero") or not (c.get("lat") and c.get("lng")):
+            continue
+        if not _in_place(c, locality, postal_code):
+            continue
+        parts = [p.strip() for p in str(c.get("muni") or "").split("/") if p.strip()]
+        muni = next((p for p in parts if _strip_diacritics(p) in
+                     {_strip_diacritics(x) for x in (locality or "").split("/")}), parts[0] if parts else locality)
+        same_portal = c.get("type") == "portal" and number is not None and c.get("portalNumber") == number
+        return {
+            "found": True, "lat": str(c["lat"]), "lon": str(c["lng"]),
+            "municipality": muni, "province": None,  # el motor usa la provincia indicada
+            "postcode": c.get("postalCode"), "road": c.get("address"),
+            "house_number": str(number) if same_portal else None,
+            "display_name": f"{c.get('address')}, {c.get('muni')}", "source": "cartociudad",
+        }
+    return None
+
+
+def cartociudad_portal(address: str, locality: str, number: int) -> dict[str, Any] | None:
+    """Coordenadas del portal `number` según CartoCiudad (IGN), que sí tiene
+    portales donde OSM no. Solo si CartoCiudad devuelve ESE número del municipio
+    pedido: su `find` responde con el portal de número más cercano (p.ej. pides
+    el 60 y da el 61, en la otra acera) o de otro municipio, que no sirven para
+    saber qué edificio es. None si no."""
+    for c in _cartociudad_candidates(address, locality):
+        if c.get("type") == "portal" and c.get("portalNumber") == number and _in_place(c, locality, ""):
+            return {"lat": c.get("lat"), "lon": c.get("lng"),
+                    "cadastral_reference": c.get("refCatastral")}
+    return None
 
 
 if __name__ == "__main__":

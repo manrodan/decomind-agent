@@ -32,6 +32,12 @@ def main() -> None:
     assert fields(q) == ["address", "postal_code", "property_type", "condition", "year_built"], q
     assert not q["ok"]
 
+    # Calle escrita pero no localizada (Laura, 2026-11-06): no se vuelve a pedir.
+    assert "address" not in fields(quality_check(**{**OK, "precision": "locality", "address_given": True}))
+    from valuation_api.engine import street_given
+    assert street_given("Calle Formentera 12") and street_given("Carrer Major") and street_given("Partida Rabdells 4")
+    assert not street_given("Oliva pueblo") and not street_given("Casa o chalet en venta en Oliva pueblo")
+
     # Piso: planta desconocida; 3º+ sin saber el ascensor; bajo-2º el ascensor da igual.
     assert fields(quality_check(**{**OK, "floor": None, "exterior": None})) == ["floor", "exterior"]
     assert fields(quality_check(**{**OK, "floor": 4, "has_elevator": None})) == ["has_elevator"]

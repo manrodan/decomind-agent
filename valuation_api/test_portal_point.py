@@ -21,11 +21,12 @@ GEO_ROAD = {"found": True, "lat": "39.9388", "lon": "-0.1068", "municipality": "
 GEO_PORTAL = {**GEO_ROAD, "house_number": "60"}
 
 
-def _carto(portal_number):
-    resp = mock.Mock(text="{}", status_code=200)
+def _carto(portal_number, muni="Vila-real"):
+    # `candidates` de CartoCiudad: lista; solo vale el del municipio pedido.
+    resp = mock.Mock(text="[]", status_code=200)
     resp.raise_for_status = lambda: None
-    resp.json.return_value = {"type": "portal", "portalNumber": portal_number,
-                              "lat": 39.937, "lng": -0.106, "refCatastral": "7349908YK4274N"}
+    resp.json.return_value = [{"type": "portal", "portalNumber": portal_number, "muni": muni,
+                               "lat": 39.937, "lng": -0.106, "refCatastral": "7349908YK4274N"}]
     return resp
 
 
@@ -57,8 +58,11 @@ def main() -> None:
         assert geo_srv.cartociudad_portal(addr, "Vila-real", 60) is None
     with mock.patch.object(geo_srv.httpx, "get", return_value=_carto(60)):
         assert geo_srv.cartociudad_portal(addr, "Vila-real", 60)["lat"] == 39.937
+    # 6. Mismo número pero en otro municipio (Mont-roig por Bellreguard): no vale.
+    with mock.patch.object(geo_srv.httpx, "get", return_value=_carto(60, muni="Mont-roig del Camp")):
+        assert geo_srv.cartociudad_portal(addr, "Vila-real", 60) is None
 
-    print("portal point OK (5/5)")
+    print("portal point OK (6/6)")
 
 
 if __name__ == "__main__":
