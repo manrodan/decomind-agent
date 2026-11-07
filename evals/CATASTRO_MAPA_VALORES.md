@@ -24,7 +24,7 @@ Conclusión: señal de ubicación real y con cobertura completa, mejor que la po
 
 Limitaciones vistas: el producto de la zona suele ser colectiva aunque haya chalets (clase distinta → sin gradiente); dato con un año de retraso; en playa el punto puede caer sin ámbito; el servicio devolvió HTML en vez de JSON en 3 peticiones seguidas una vez (reintentar).
 
-## Implementación (2026-11-07, tarde) — ⚠️ NO desplegada
+## Implementación (2026-11-07, tarde) — ✅ EN PRODUCCIÓN desde 2026-11-07 (rev `valuation-api-00033-94m`, clave intacta)
 `mcp_servers/zona_valor/server.py::mapa_valores_gradient` + cascada en `valuation_api/engine.py` (6a): primero el mapa, si no ponencia; `ZONA_VALOR_MAPA=0` lo apaga. Tests `valuation_api/test_mapa_valores.py` (10, sin red). Golden: 12 valoraciones reales con el interruptor apagado = idénticas (solo se añade `zone_source`).
 
 Backtest con el motor real (132 pares limpios, `compara_mapa.py` en el workspace privado): fuera de [0,75-1,0] 73 → 68 %, MAD log 0,251 → 0,240, acerca al centro 49 / aleja 31, fuera→dentro 9 / dentro→fuera 2; gradiente aplicado en 92 de 106 casos con calle (81 mapa + 11 ponencia) frente a 49. Ningún municipio empeora en % fuera; la MAD sube en Castellón y Benicàssim por 3-4 casos sueltos (duplicados y unifamiliares con base alta), no por patrón.
