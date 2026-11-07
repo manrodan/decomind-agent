@@ -253,6 +253,199 @@ def zona_valor_gradient(lat: float, lon: float) -> dict[str, Any]:
     return out
 
 
+# ── Mapa de valores de referencia (Sede del Catastro) ──────────────────────
+# Ámbitos territoriales homogéneos con el módulo €/m² del producto inmobiliario
+# representativo, derivado de las COMPRAVENTAS ante notario (mapa del ejercicio
+# N = dato de N-1; el de N+1 se publica a finales de octubre). Público, sin
+# identificación; una petición devuelve TODOS los ámbitos del municipio del
+# punto (polígonos WGS84, ~400 KB) → caché de proceso por municipio.
+# Fuente PREFERENTE del gradiente 6a del engine (ventas firmadas, anual,
+# cobertura total salvo forales); la ponencia (valor IBI) queda de respaldo
+# cuando no hay ámbito, el producto de la zona es de otra clase (chalet en zona
+# de pisos) o el servicio no responde. Nivel absoluto NO utilizable (producto
+# tipo de 32-50 años: ~0,5 del mercado); solo el ratio zona/municipio.
+# Verificado 2026-11-07: Benicàssim 26 ámbitos (pueblo 1.430-1.550 €/m², playa
+# 2.500-3.430, villas hasta 5.200); evals/CATASTRO_MAPA_VALORES.md.
+MAPA_VALORES = "https://www1.sedecatastro.gob.es/Cartografia/SECDameGeoJSON.aspx"
+_MAPA_TIMEOUT = 10.0  # ×2 años en el peor caso; Madrid (8 MB) tarda ~3 s
+_MAPA_CACHE: dict[tuple[str, str], dict[str, Any]] = {}  # (del, mun) -> {anyo, zonas, bbox}
+_MAPA_MISS: dict[tuple[float, float], float] = {}  # punto redondeado (~100 m) sin ámbito -> hora
+_MAPA_MISS_TTL_S = 3600.0
+_MAPA_RADII_M = (80.0, 200.0, 400.0)  # respaldo SIN red: punto en playa/borde de polígono
+_MAPA_BBOX_MARGEN = 0.006  # grados (~500 m): el anillo de respaldo puede salir del bbox
+# Ciudades multi-CP (Madrid 678 ámbitos, Valencia 150): el Notariado por CP ya
+# captura parte de la ubicación y el 17 % de los ámbitos de Madrid saturan el
+# ±30 %. ponytail: tope más corto hasta tener backtest con Madrid/Valencia.
+_MAPA_GRANDE = 100
+_MAPA_BOUND_GRANDE = 0.15
+
+
+def _clase_producto(tipologia: str | None) -> str | None:
+    """Tipología del producto del ámbito → clase del motor (piso / unifamiliar)."""
+    t = (tipologia or "").lower()
+    return "piso" if "colectiva" in t else ("unifamiliar" if "unifamiliar" in t else None)
+
+
+def _zona_de_feature(f: dict[str, Any]) -> dict[str, Any] | None:
+    """Feature del GeoJSON → {cod, n, productos:[{clase, m2, tipologia}], anillos}. None sin dato."""
+    p = f.get("properties") or {}
+    productos = []
+    n_zona = int(p.get("num_inmuebles_uso_v") or 0)
+    for key in ("Ptipo1", "Ptipo2"):
+        pt = p.get(key) or {}
+        clase = _clase_producto(pt.get("tipologia"))
+        m2 = pt.get("val_tipo_m2") or 0
+        if clase and m2 > 0:
+            productos.append({"clase": clase, "m2": float(m2), "tipologia": pt["tipologia"],
+                              "n": int(pt.get("num_inmueble") or 0) or n_zona})
+    geom = f.get("geometry") or {}
+    polys = [geom["coordinates"]] if geom.get("type") == "Polygon" else geom.get("coordinates") or []
+    poligonos = [(poly[0], poly[1:]) for poly in polys if poly]  # (anillo exterior, huecos)
+    if not productos or not poligonos:
+        return None
+    return {"cod": str(p.get("cod_zona") or ""), "n": n_zona, "productos": productos, "poligonos": poligonos}
+
+
+def _pip(lon: float, lat: float, ring: list) -> bool:
+    """Punto en polígono (ray casting) sobre un anillo [[lon, lat], ...]."""
+    ins = False
+    for i in range(len(ring)):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[i - 1][0], ring[i - 1][1]
+        if (yi > lat) != (yj > lat) and lon < (xj - xi) * (lat - yi) / (yj - yi) + xi:
+            ins = not ins
+    return ins
+
+
+def _en_poligono(lon: float, lat: float, poligono: tuple[list, list]) -> bool:
+    """Dentro del anillo exterior y fuera de sus huecos (un ámbito-isla no hereda el
+    módulo del que lo envuelve)."""
+    exterior, huecos = poligono
+    return _pip(lon, lat, exterior) and not any(_pip(lon, lat, h) for h in huecos)
+
+
+def _zona_del_punto(zonas: list[dict[str, Any]], lat: float, lon: float) -> dict[str, Any] | None:
+    for z in zonas:
+        if any(_en_poligono(lon, lat, pg) for pg in z["poligonos"]):
+            return z
+    return None
+
+
+def _bbox(zonas: list[dict[str, Any]]) -> tuple[float, float, float, float]:
+    lons = [pt[0] for z in zonas for ext, _ in z["poligonos"] for pt in ext]
+    lats = [pt[1] for z in zonas for ext, _ in z["poligonos"] for pt in ext]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _zona_con_respaldo(zonas: list[dict[str, Any]], lat: float, lon: float) -> dict[str, Any] | None:
+    """Zona del punto; si no cae en ninguna (playa, borde), la más frecuente en anillos
+    crecientes. Sin red: los polígonos ya están aquí."""
+    z = _zona_del_punto(zonas, lat, lon)
+    if z:
+        return z
+    for radius in _MAPA_RADII_M:
+        hits = [h for h in (_zona_del_punto(zonas, la, lo) for la, lo in _ring_points(lat, lon, radius)) if h]
+        if hits:
+            cods = [h["cod"] for h in hits]
+            best = max(set(cods), key=cods.count)
+            return next(h for h in hits if h["cod"] == best)
+    return None
+
+
+def _mapa_fetch(lat: float, lon: float) -> dict[str, Any] | None:
+    """Descarga los ámbitos del municipio del punto. Primero el mapa del año que viene
+    (publicado desde finales de octubre), si viene vacío el del año en curso."""
+    import datetime as _dt
+    x, y = _merc(lon, lat)
+    anyo_actual = _dt.date.today().year
+    html = False
+    for anyo in (anyo_actual + 1, anyo_actual):
+        r = catastro_get(MAPA_VALORES, {"del": 0, "mun": 0, "huso": 3857, "x": x, "y": y, "suelo": "N",
+                                        "tipo_mapa": "vivienda", "anyoZV": anyo}, timeout=_MAPA_TIMEOUT)
+        try:
+            feats = r.json().get("features") or []
+        except ValueError:  # a veces contesta HTML en vez de JSON
+            feats, html = [], True
+        zonas = [z for z in (_zona_de_feature(f) for f in feats) if z]
+        if zonas:
+            p0 = feats[0].get("properties") or {}
+            return {"anyo": anyo, "del": str(p0.get("id_delegacion") or ""), "mun": str(p0.get("id_municipio") or ""),
+                    "zonas": zonas, "bbox": _bbox(zonas)}
+    if html:  # sin JSON en ningún año: servicio caído, no «sin ámbito»
+        raise RuntimeError("mapa de valores: respuesta HTML")
+    return None
+
+
+def _mapa_del_punto(lat: float, lon: float) -> dict[str, Any] | None:
+    """Municipio (cacheado) cuyo mapa resuelve el punto (dentro de un ámbito o por el
+    anillo de respaldo, dentro de su bbox); descarga si ninguno. Los puntos sin
+    ámbito (mar, foral, gris) se recuerdan una hora para no re-descargar cada vez."""
+    for data in _MAPA_CACHE.values():
+        x0, y0, x1, y1 = data["bbox"]
+        m = _MAPA_BBOX_MARGEN
+        if x0 - m <= lon <= x1 + m and y0 - m <= lat <= y1 + m and _zona_con_respaldo(data["zonas"], lat, lon):
+            return data
+    clave = (round(lat, 3), round(lon, 3))
+    if time.monotonic() - _MAPA_MISS.get(clave, -1e9) < _MAPA_MISS_TTL_S:
+        return None
+    data = _mapa_fetch(lat, lon)
+    if data:
+        _MAPA_CACHE[(data["del"], data["mun"])] = data
+        if not _zona_con_respaldo(data["zonas"], lat, lon):
+            _MAPA_MISS[clave] = time.monotonic()
+    else:
+        _MAPA_MISS[clave] = time.monotonic()
+    return data
+
+
+def _mapa_baseline(zonas: list[dict[str, Any]], clase: str) -> float | None:
+    """Media del módulo de las zonas con producto de esa clase, ponderada por nº de
+    viviendas = lo que el Notariado municipal/CP promedia. Función pura."""
+    pares = [(p["m2"], p["n"]) for z in zonas for p in z["productos"] if p["clase"] == clase]
+    peso = sum(n for _, n in pares)
+    if not peso:
+        return statistics.mean(m for m, _ in pares) if pares else None
+    return sum(m * n for m, n in pares) / peso
+
+
+@mcp.tool()
+def mapa_valores_gradient(lat: float, lon: float, property_class: str = "") -> dict[str, Any]:
+    """Gradiente de ubicación desde el mapa de valores de referencia: módulo €/m² del
+    ámbito del inmueble ÷ media ponderada de los ámbitos del municipio con producto de
+    la misma clase (piso / unifamiliar), amortiguado (**0.5) y acotado a ±30 %.
+
+    {found: False} sin clase, sin ámbito o si el producto de la zona es de otra clase
+    (→ el engine cae a la ponencia); además `error` si el Catastro no respondió.
+    """
+    if property_class not in ("piso", "unifamiliar"):
+        return {"found": False, "gradient": 1.0}
+    try:
+        data = _mapa_del_punto(lat, lon)
+    except Exception as exc:
+        logger.warning("mapa_valores failed: %s", exc)
+        return {"found": False, "gradient": 1.0, "error": True}
+    if not data:
+        return {"found": False, "gradient": 1.0}
+    zona = _zona_con_respaldo(data["zonas"], lat, lon)
+    prod = next((p for p in (zona or {}).get("productos", []) if p["clase"] == property_class), None)
+    baseline = _mapa_baseline(data["zonas"], property_class) if prod else None
+    if not prod or not baseline:
+        return {"found": False, "gradient": 1.0, "reason": "clase" if zona and not prod else "sin_ambito"}
+    bound = _MAPA_BOUND_GRANDE if len(data["zonas"]) > _MAPA_GRANDE else _BOUND
+    return {
+        "found": True,
+        "gradient": round(_clamp_gradient(prod["m2"], baseline, bound=bound), 4),
+        "bound": bound,
+        "raw_gradient": round(prod["m2"] / baseline, 4),
+        "subject": prod["m2"],
+        "neighborhood_mean": round(baseline, 1),
+        "zone_code": f"MV{zona['cod']}",
+        "n": len(data["zonas"]),
+        "anyo": data["anyo"],
+        "tipologia": prod["tipologia"],
+    }
+
+
 if __name__ == "__main__":
     from mcp_servers._runtime import run_server
     run_server(mcp)

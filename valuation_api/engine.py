@@ -23,6 +23,7 @@ Reutiliza la lógica ya escrita y testeada (evals 100%) en mcp_servers/.
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any
 
@@ -44,7 +45,7 @@ from mcp_servers.seccion_censal.server import (
     seccion_signal_gradient,
     stock_age_year,
 )
-from mcp_servers.zona_valor.server import zona_valor_gradient
+from mcp_servers.zona_valor.server import mapa_valores_gradient, zona_valor_gradient
 from mcp_servers._guardrails import (
     PROVINCE_ALIASES_BY_CP_PREFIX,
     _norm_province,
@@ -737,10 +738,26 @@ def run_valuation(
     location_adjustment: dict[str, Any] = {"applied": False}
     catastro_caido = False  # la zona de valor no respondió (≠ sin cobertura)
     if precision == "street" and lat and lon and value_per_m2:
-        try:
-            grad = zona_valor_gradient(lat=lat, lon=lon)
-        except Exception:
-            grad = {"found": False, "gradient": 1.0, "error": True}
+        # En CASCADA: primero el mapa de valores de referencia (compraventas ante
+        # notario por ámbito, cobertura total); si no hay ámbito, el producto de
+        # la zona es de otra clase o el servicio falla, la ponencia catastral.
+        # ZONA_VALOR_MAPA=0 apaga el mapa (golden --check y marcha atrás).
+        grad: dict[str, Any] = {"found": False, "gradient": 1.0}
+        if os.environ.get("ZONA_VALOR_MAPA", "1") != "0":
+            try:
+                grad = mapa_valores_gradient(lat=lat, lon=lon, property_class=property_class)
+            except Exception:
+                grad = {"found": False, "gradient": 1.0, "error": True}
+        zone_source = "mapa_valores"
+        if not grad.get("found"):
+            mapa_caido = bool(grad.get("error"))
+            zone_source = "ponencia"
+            try:
+                grad = zona_valor_gradient(lat=lat, lon=lon)
+            except Exception:
+                grad = {"found": False, "gradient": 1.0, "error": True}
+            if mapa_caido and not grad.get("found"):
+                grad["error"] = True
         catastro_caido = bool(grad.get("error"))
         try:
             sec = seccion_signal_gradient(
@@ -765,6 +782,7 @@ def run_valuation(
                 "gradient": g,
                 "pct": round((g - 1) * 100, 1),
                 "zone_code": grad.get("zone_code"),
+                "zone_source": zone_source if grad.get("found") else None,
                 "neighborhood_mean_eur_m2": grad.get("neighborhood_mean"),
                 "cusec": sec.get("cusec"),
                 "components": components,
