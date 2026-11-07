@@ -218,6 +218,33 @@ def _cartociudad_candidates(address: str, locality: str) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+def _cartociudad_centro_calle(c: dict) -> tuple[float, float] | None:
+    """(lat, lon) del centro del trazado de una calle cuando `candidates` la devuelve
+    sin coordenadas (type «callejero», lat/lng 0): su `find` trae la geometría
+    (MULTILINESTRING) → media de los vértices. Los anuncios de portal vienen a
+    menudo sin número y sin esto el motor se quedaba a nivel de municipio.
+    ponytail: media de vértices, no punto medio por longitud; en una calle de
+    pueblo o urbanización cae en el mismo ámbito. None si falla."""
+    try:
+        resp = httpx.get(
+            "https://www.cartociudad.es/geocoder/api/geocoder/find",
+            params={"id": c.get("id"), "type": c.get("type")},
+            headers={"User-Agent": NOMINATIM_USER_AGENT},
+            timeout=NOMINATIM_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        d = resp.json() if resp.text.strip() else {}
+    except Exception as exc:
+        logger.warning("CartoCiudad find failed for %s: %s", c.get("id"), exc)
+        return None
+    if d.get("lat") and d.get("lng"):
+        return float(d["lat"]), float(d["lng"])
+    pts = re.findall(r"(-?\d+\.\d+)\s+(-?\d+\.\d+)", str(d.get("geom") or ""))
+    if not pts:
+        return None
+    return (sum(float(y) for _, y in pts) / len(pts), sum(float(x) for x, _ in pts) / len(pts))
+
+
 def _in_place(c: dict, locality: str, postal_code: str) -> bool:
     """¿El candidato es del municipio pedido (nombre bilingüe «A/B» vale) o de su CP?
     Su `find` devuelve a veces otra provincia (Mont-roig del Camp por Bellreguard)."""
@@ -238,18 +265,30 @@ def cartociudad_street(address: str, locality: str, postal_code: str = "") -> di
     m = re.search(r"(\d{1,4})\s*[a-zA-Z]?\s*$", (address or "").strip())
     number = int(m.group(1)) if m else None
     for c in _cartociudad_candidates(address, locality):
-        if c.get("type") not in ("portal", "callejero") or not (c.get("lat") and c.get("lng")):
+        if c.get("type") not in ("portal", "callejero"):
             continue
         if not _in_place(c, locality, postal_code):
             continue
+        lat, lng = c.get("lat"), c.get("lng")
+        if not (lat and lng):
+            if c.get("type") != "callejero":
+                continue
+            centro = _cartociudad_centro_calle(c)  # calle sin número: centro del trazado
+            if not centro:
+                continue
+            lat, lng = centro
         parts = [p.strip() for p in str(c.get("muni") or "").split("/") if p.strip()]
         muni = next((p for p in parts if _strip_diacritics(p) in
                      {_strip_diacritics(x) for x in (locality or "").split("/")}), parts[0] if parts else locality)
         same_portal = c.get("type") == "portal" and number is not None and c.get("portalNumber") == number
+        # Una calle puede cruzar varios CP («12002 12005»): solo se afirma el CP si es único
+        # o coincide con el pedido; si no, el motor sigue con el CP del usuario/municipio.
+        cps = str(c.get("postalCode") or "").split()
+        postcode = cps[0] if len(cps) == 1 else (postal_code.strip() if postal_code.strip() in cps else None)
         return {
-            "found": True, "lat": str(c["lat"]), "lon": str(c["lng"]),
+            "found": True, "lat": str(lat), "lon": str(lng),
             "municipality": muni, "province": None,  # el motor usa la provincia indicada
-            "postcode": c.get("postalCode"), "road": c.get("address"),
+            "postcode": postcode, "road": c.get("address"),
             "house_number": str(number) if same_portal else None,
             "display_name": f"{c.get('address')}, {c.get('muni')}", "source": "cartociudad",
         }
